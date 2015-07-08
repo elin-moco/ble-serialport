@@ -9,6 +9,7 @@ A virtual [node-serialport] implementation that uses [BLE] as the transport.
 git clone https://github.com/elin-moco/ble-serialport
 cd ble-serialport
 npm install
+npm install --dev
 ```
 
 # Usage
@@ -17,15 +18,14 @@ Firstly, you'll need an [Arduino] board with [BleShield] added on top of it, put
 upload this [BleFirmataSketch] firmware to it.
 
 To use BLE to send/receive data to the device with [firmata] or [Johnny Five],  
-run below gulp task to [browserify] them:
+run below gulp task to [browserify] them like:
 ```
 gulp build-j5
-gulp build-firmata
 ```
 
-Include it in your html file:
+Include them in your html file:
 ```html
-  <script type="text/javascript" src="j5-bundle.js"></script>
+  <script type="text/javascript" src="j5-bundle-min.js"></script>
 ```
 
 Then use them directly in your script:

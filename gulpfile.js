@@ -10,23 +10,27 @@ var jsonlint = require('gulp-jsonlint');
 var sloc = require('gulp-sloc');
 var rename = require('gulp-rename');
 var browserify = require('gulp-browserify');
+var compressor = require('gulp-compressor');
+var util = require('gulp-util');
 
 var options = {
   param: { // Project settings
     debug: false,
-    build: 'build'
+    build: 'build',
+    dist: 'dist'
   }
 };
 
 var lintSources = [
     '**/*.js',
-    '!build/**',
+    '!' + options.param.build + '/**',
     '!node_modules/**'
   ];
 
 gulp.task('jsonlint', function() {
   return gulp.src([
       '**/*.json',
+      '!' + options.param.build + '/**',
       '!node_modules/**'
     ])
     .pipe(jsonlint())
@@ -34,13 +38,14 @@ gulp.task('jsonlint', function() {
 });
 
 gulp.task('sloc', function() {
-  gulp.src(lintSources)
+  return gulp.src(lintSources)
     .pipe(sloc());
 });
 
 gulp.task('clean', function(cb) {
-  del([
-    options.param.build
+  return del([
+    options.param.build,
+    options.param.dist
   ], cb);
 });
 
@@ -58,24 +63,45 @@ gulp.task('lint', ['jsonlint', 'sloc'],
   });
 
 gulp.task('build-firmata', function() {
-    gulp.src('firmata-bundle-entry.js')
-        .pipe(browserify({
-          ignore: ['debug', 'serialport', 'browser-serialport'],
-          debug: options.param.debug
-        }))
-        .pipe(rename('firmata-bundle.js'))
-        .pipe(gulp.dest(options.param.build));
+  gulp.src('firmata-bundle-entry.js')
+    .pipe(browserify({
+      ignore: ['debug', 'serialport', 'browser-serialport'],
+      debug: options.param.debug
+    }))
+    .pipe(rename('firmata-bundle.js'))
+    .pipe(gulp.dest(options.param.build));
   });
 
 gulp.task('build-j5', function() {
-    gulp.src('j5-bundle-entry.js')
-        .pipe(browserify({
-          ignore: ['debug', 'browser-serialport', 'board-io', 'es6-shim'],
-          debug: options.param.debug
-        }))
-        .pipe(rename('j5-bundle.js'))
-        .pipe(gulp.dest(options.param.build));
+  gulp.src('j5-bundle-entry.js')
+    .pipe(browserify({
+      ignore: ['debug', 'browser-serialport', 'board-io', 'es6-shim'],
+      debug: options.param.debug
+    }))
+    .pipe(rename('j5-bundle.js'))
+    .pipe(gulp.dest(options.param.build));
   });
+
+gulp.task('compress', function() {
+  gulp.src('build/*.js')
+    .pipe(compressor({
+      'remove-intertag-spaces': true,
+      'simple-bool-attr': true,
+      'compress-js': true,
+      'compress-css': true,
+      'executeOption': {
+          maxBuffer: 10000*1024
+      }
+    }).on('error', util.log))
+    .pipe(rename(function(path) {path.basename += '-min';}))
+    .pipe(gulp.dest(options.param.dist));
+});
+
+gulp.task('build', ['build-j5', 'build-firmata']);
+
+gulp.task('dist', ['build'], function() {
+  gulp.start('compress');
+});
 
 gulp.task('githooks', function() {
   return gulp.src(['pre-commit'])
