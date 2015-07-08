@@ -1,9 +1,9 @@
+/* global require, Bluetooth, module */
 'use strict';
 
 var util = require('util');
 var stream = require('stream');
 require('blue-yeast');
-
 
 function BleSerialPort(options) {
   this.options = options;
@@ -11,17 +11,17 @@ function BleSerialPort(options) {
 
 util.inherits(BleSerialPort, stream.Stream);
 
-BleSerialPort.prototype.connect = function () {
+BleSerialPort.prototype.connect = function() {
   var self = this;
   return new Promise(function(resolve, reject) {
-    try{
+    try {
       self.ble = Bluetooth;
       self.device = self.ble.addDevice(self.options.name, self.options.address);
       self.device.on('connect', function() {
         this.startNotifications();
         resolve();
       });
-    } catch(exp){
+    } catch (exp) {
       reject();
       console.info('error on message', exp);
       self.emit('error', 'error receiving message: ' + exp);
@@ -31,8 +31,8 @@ BleSerialPort.prototype.connect = function () {
     var START_SYSEX = 0xF0;
     var END_SYSEX = 0xF7;
 
-    self.device.on('data', function(data){
-      try{
+    self.device.on('data', function(data) {
+      try {
         console.info('received', self._toHexString(data));
         data = new Uint8Array(data);
         console.info('received', data);
@@ -45,17 +45,15 @@ BleSerialPort.prototype.connect = function () {
             self.emit('data', self.buffer);
             self.buffer = null;
           }
-        }
-        else if (data[0] === START_SYSEX &&
+        } else if (data[0] === START_SYSEX &&
           data[data.length - 1] !== END_SYSEX) {
           //SYSEX response incomplete, wait for END_SYSEX byte
           console.log('Begin of SYSEX response');
           self.buffer = data;
-        }
-        else {
+        } else {
           self.emit('data', data);
         }
-      } catch(exp){
+      } catch (exp) {
         console.info('error on message', exp);
         self.emit('error', 'error receiving message: ' + exp);
       }
@@ -64,48 +62,44 @@ BleSerialPort.prototype.connect = function () {
   });
 };
 
-BleSerialPort.prototype.open = function (callback) {
+BleSerialPort.prototype.open = function(callback) {
   if (callback) {
     callback();
   }
 };
 
-
-
-BleSerialPort.prototype.write = function (data, callback) {
+BleSerialPort.prototype.write = function(data, callback) {
 
   console.info('sending data:', this._toHexString(data.buffer));
 
   this.device.send(data);
 };
 
-
-
-BleSerialPort.prototype.close = function (callback) {
+BleSerialPort.prototype.close = function(callback) {
   console.info('closing');
-  if(callback){
+  if (callback) {
     callback();
   }
 };
 
-BleSerialPort.prototype.flush = function (callback) {
+BleSerialPort.prototype.flush = function(callback) {
   console.info('flush');
-  if(callback){
+  if (callback) {
     callback();
   }
 };
 
-BleSerialPort.prototype.drain = function (callback) {
+BleSerialPort.prototype.drain = function(callback) {
   console.info('drain');
-  if(callback){
+  if (callback) {
     callback();
   }
 };
 
-BleSerialPort.prototype._concatBuffer = function( buffer1, buffer2 ) {
-  var tmp = new Uint8Array( buffer1.byteLength + buffer2.byteLength );
-  tmp.set( buffer1 , 0 );
-  tmp.set( buffer2, buffer1.byteLength );
+BleSerialPort.prototype._concatBuffer = function(buffer1, buffer2) {
+  var tmp = new Uint8Array(buffer1.byteLength + buffer2.byteLength);
+  tmp.set(buffer1 , 0);
+  tmp.set(buffer2, buffer1.byteLength);
   return tmp;
 };
 
@@ -128,7 +122,7 @@ BleSerialPort.prototype._toHexString = function(arrayBuffer) {
     for (var i = 0; i < uint8Array.length; i++) {
       var b = uint8Array[i].toString(16);
       if (b.length == 1) {
-        str += '0'
+        str += '0';
       }
       str += b;
     }

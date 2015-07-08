@@ -20,7 +20,7 @@ var options = {
 
 var lintSources = [
     '**/*.js',
-    '!*-bundle.js',
+    '!build/**',
     '!node_modules/**'
   ];
 
@@ -58,25 +58,23 @@ gulp.task('lint', ['jsonlint', 'sloc'],
   });
 
 gulp.task('build-firmata', function() {
-    // Single entry point to browserify 
     gulp.src('firmata-bundle-entry.js')
         .pipe(browserify({
           ignore: ['debug', 'serialport', 'browser-serialport'],
           debug: options.param.debug
         }))
         .pipe(rename('firmata-bundle.js'))
-        .pipe(gulp.dest(options.param.build))
+        .pipe(gulp.dest(options.param.build));
   });
 
 gulp.task('build-j5', function() {
-    // Single entry point to browserify 
     gulp.src('j5-bundle-entry.js')
         .pipe(browserify({
           ignore: ['debug', 'browser-serialport', 'board-io', 'es6-shim'],
           debug: options.param.debug
         }))
         .pipe(rename('j5-bundle.js'))
-        .pipe(gulp.dest(options.param.build))
+        .pipe(gulp.dest(options.param.build));
   });
 
 gulp.task('githooks', function() {
