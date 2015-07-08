@@ -16,8 +16,8 @@ npm install
 Firstly, you'll need an [Arduino] board with [BleShield] added on top of it, put an LED on pin 7,
 upload this [BleFirmataSketch] firmware to it.
 
-To use BLE to send/receive data to the device with firmata or Johnny Five,  
-run gulp task to browserify them:
+To use BLE to send/receive data to the device with [firmata] or [Johnny Five],  
+run below gulp task to [browserify] them:
 ```
 gulp build-j5
 gulp build-firmata
@@ -30,7 +30,7 @@ Include it in your html file:
 
 Then use them directly in your script:
 ```js
-var bsp = new BleSerialPort({address: 'd0:6a:cf:58:ee:bd'});
+var bsp = new BleSerialPort({address: 'd0:6a:cf:58:ee:bd'}); //put your device name or address here
 bsp.connect().then(function() {
   var board = new five.Board({port: bsp, repl: false});
   board.on('ready', function() {
@@ -41,7 +41,7 @@ bsp.connect().then(function() {
 
 ```
 
-And you'll see the LED blinks once you have the webapp(page) opened.
+And you should see the LED blinks once you have the webapp(page) opened.
 
 # Support
 
@@ -57,6 +57,8 @@ See [blue-yeast] if you are interested in enabling this for other platforms.
 [BleShield]: http://redbearlab.com/bleshield/
 [node-serialport]: https://github.com/voodootikigod/node-serialport
 [firmata]: https://github.com/jgautier/firmata/ 
+[Johnny Five]: http://github.com/rwaldron/johnny-five/ 
 [BleFirmataSketch]: https://codebender.cc/sketch:128276
 [blue-yeast]: https://github.com/evanxd/blue-yeast
 [WebBluetooth V2 API]: https://wiki.mozilla.org/B2G/Bluetooth/WebBluetooth-v2
+[browserify]: http://browserify.org/ 
