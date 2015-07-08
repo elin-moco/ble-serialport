@@ -15,7 +15,19 @@
   },
   "license": "Apache License 2.0",
   "dependencies": {
-    "bluetooth-helper": "0.0.7"
+    "blue-yeast": "0.1.0",
+    "del": "^1.2.0",
+    "firmata": "^0.5.5",
+    "gulp": "^3.9.0",
+    "gulp-browserify": "^0.5.1",
+    "gulp-jscs": "^1.6.0",
+    "gulp-jscs-stylish": "^1.1.0",
+    "gulp-jshint": "^1.11.2",
+    "gulp-jsonlint": "^1.1.0",
+    "gulp-rename": "^1.2.2",
+    "gulp-sloc": "^1.0.4",
+    "johnny-five": "^0.8.85",
+    "jscs-jsdoc": "^1.1.0"
   },
   "homepage": "https://github.com/elin-moco/ble-serialport"
 }

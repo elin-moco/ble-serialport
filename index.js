@@ -2,7 +2,7 @@
 
 var util = require('util');
 var stream = require('stream');
-require('bluetooth-helper');
+require('blue-yeast');
 
 
 function BleSerialPort(options) {
@@ -17,7 +17,7 @@ BleSerialPort.prototype.connect = function () {
     try{
       self.ble = Bluetooth;
       self.device = self.ble.addDevice(self.options.name, self.options.address);
-      self.device.on('connected', function() {
+      self.device.on('connect', function() {
         this.startNotifications();
         resolve();
       });
