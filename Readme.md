@@ -6,7 +6,9 @@ A virtual [node-serialport] implementation that uses [BLE] as the transport.
 # Installation
 
 ```
-npm install ble-serialport
+git clone https://github.com/elin-moco/ble-serialport
+cd ble-serialport
+npm install
 ```
 
 # Usage
@@ -14,39 +16,32 @@ npm install ble-serialport
 Firstly, you'll need an [Arduino] board with [BleShield] added on top of it, put an LED on pin 7,
 upload this [BleFirmataSketch] firmware to it.
 
-To use BLE to send/receive data to the device with firmata,  
-make sure you have [firmata] and ble-serialport installed:
+To use BLE to send/receive data to the device with firmata or Johnny Five,  
+run gulp task to browserify them:
 ```
-cd examples
-npm install ble-serialport
-npm install firmata
+gulp build-j5
+gulp build-firmata
 ```
 
-Modify device address(or name) in firmataExample.js
+Include it in your html file:
+```html
+  <script type="text/javascript" src="j5-bundle.js"></script>
+```
+
+Then use them directly in your script:
 ```js
-var BleSerialPort = require('ble-serialport').SerialPort;
-var firmata = require('firmata');
 var bsp = new BleSerialPort({address: 'd0:6a:cf:58:ee:bd'});
 bsp.connect().then(function() {
-  var board = new firmata.Board(sp);
+  var board = new five.Board({port: bsp, repl: false});
   board.on('ready', function() {
-    board.digitalWrite(7, board.HIGH);
+    var led = new five.Led(7);
+    led.blink();
   });
 });
 
 ```
 
-Run browserify to bring node.js code to the web:
-```
-browserify firmataExample.js -o firmataExampleBundle.js -i debug -i serialport -i browser-serialport
-```
-
-Include it in your html file:
-```html
-  <script type="text/javascript" src="firmataExampleBundle.js"></script>
-```
-
-And you'll see the LED on once you have the webapp(page) opened.
+And you'll see the LED blinks once you have the webapp(page) opened.
 
 # Support
 
