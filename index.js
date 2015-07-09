@@ -16,7 +16,7 @@ BleSerialPort.prototype.connect = function() {
   return new Promise(function(resolve, reject) {
     try {
       self.ble = Bluetooth;
-      self.device = self.ble.addDevice(self.options.name, self.options.address);
+      self.device = self.ble.connect(self.options.name, self.options.address);
       self.device.on('connect', function() {
         this.startNotifications();
         resolve();

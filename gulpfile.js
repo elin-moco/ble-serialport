@@ -4,7 +4,8 @@ var gulp = require('gulp');
 var del = require('del');
 var jshint = require('gulp-jshint');
 var jscs = require('gulp-jscs');
-var noop = function() {};
+var noop = function() {
+};
 var stylish = require('gulp-jscs-stylish');
 var jsonlint = require('gulp-jsonlint');
 var sloc = require('gulp-sloc');
@@ -22,17 +23,18 @@ var options = {
 };
 
 var lintSources = [
-    '**/*.js',
-    '!' + options.param.build + '/**',
-    '!node_modules/**'
-  ];
+  '**/*.js',
+  '!' + options.param.build + '/**',
+  '!' + options.param.dist + '/**',
+  '!node_modules/**'
+];
 
 gulp.task('jsonlint', function() {
   return gulp.src([
-      '**/*.json',
-      '!' + options.param.build + '/**',
-      '!node_modules/**'
-    ])
+    '**/*.json',
+    '!' + options.param.build + '/**',
+    '!' + options.param.dist + '/**',
+    '!node_modules/**'])
     .pipe(jsonlint())
     .pipe(jsonlint.reporter());
 });
@@ -70,35 +72,35 @@ gulp.task('build-firmata', function() {
     }))
     .pipe(rename('firmata-bundle.js'))
     .pipe(gulp.dest(options.param.build));
-  });
+});
 
 gulp.task('build-j5', function() {
   gulp.src('j5-bundle-entry.js')
     .pipe(browserify({
-      ignore: ['debug', 'browser-serialport', 'board-io', 'es6-shim'],
+      ignore: ['debug', 'board-io', 'es6-shim'],
       debug: options.param.debug
     }))
     .pipe(rename('j5-bundle.js'))
     .pipe(gulp.dest(options.param.build));
-  });
+});
 
+//FIXME: currently have problem running compressed script
 gulp.task('compress', function() {
   gulp.src('build/*.js')
     .pipe(compressor({
-      'remove-intertag-spaces': true,
-      'simple-bool-attr': true,
-      'compress-js': true,
-      'compress-css': true,
       'executeOption': {
-          maxBuffer: 10000*1024
+        maxBuffer: 10000 * 1024
       }
     }).on('error', util.log))
-    .pipe(rename(function(path) {path.basename += '-min';}))
+    .pipe(rename(function(path) {
+      path.basename += '-min';
+    }))
     .pipe(gulp.dest(options.param.dist));
 });
 
 gulp.task('build', ['build-j5', 'build-firmata']);
 
+//FIXME: currently compress won't work with a clean build
 gulp.task('dist', ['build'], function() {
   gulp.start('compress');
 });

@@ -3,8 +3,9 @@ BleSerialPort
 
 A virtual [node-serialport] implementation that uses [BLE] as the transport.
 
-# Installation
+# Prerequisites
 
+First you need [git] and [node.js] to clone this repo and install dependencies:
 ```
 git clone https://github.com/elin-moco/ble-serialport
 cd ble-serialport
@@ -12,23 +13,27 @@ npm install
 npm install --dev
 ```
 
-# Usage
+Secondly, you'll need an [Arduino] board with [BleShield] added on top of it, 
+put an LED on pin 7, connect Arduino to you computer, 
+and upload this [BleFirmataSketch] firmware to it.
 
-Firstly, you'll need an [Arduino] board with [BleShield] added on top of it, put an LED on pin 7,
-upload this [BleFirmataSketch] firmware to it.
-
-To use BLE to send/receive data to the device with [firmata] or [Johnny Five],  
-run below gulp task to [browserify] them like:
+To use BLE to send/receive data to the device with [firmata] or [Johnny Five],
+run below gulp tasks to [browserify] them like:
 ```
-gulp build-j5
+gulp build
 ```
 
-Include them in your html file:
+You'll find the browserified scripts in `build` folder 
+
+
+# Use with Johnny Five
+
+Include Johnny Five bundle script in your html file:
 ```html
-  <script type="text/javascript" src="j5-bundle-min.js"></script>
+  <script type="text/javascript" src="j5-bundle.js"></script>
 ```
 
-Then use them directly in your script:
+Then use it directly in your script:
 ```js
 var bsp = new BleSerialPort({address: 'd0:6a:cf:58:ee:bd'}); //put your device name or address here
 bsp.connect().then(function() {
@@ -42,6 +47,29 @@ bsp.connect().then(function() {
 ```
 
 And you should see the LED blinks once you have the webapp(page) opened.
+
+
+# Use with Firmata
+
+Include the firmata bundle script in your html file:
+```html
+  <script type="text/javascript" src="firmata-bundle.js"></script>
+```
+
+Then use it directly in your script:
+```js
+var bsp = new BleSerialPort({address: 'd0:6a:cf:58:ee:bd'}); //put your device name or address here
+bsp.connect().then(function() {
+  var board = new firmata.Board(sp);
+  board.on('ready', function() {
+    board.digitalWrite(7, board.HIGH);
+  });
+});
+
+```
+
+And you should see the LED on once you have the webapp(page) opened.
+
 
 # Support
 
@@ -62,3 +90,5 @@ See [blue-yeast] if you are interested in enabling this for other platforms.
 [blue-yeast]: https://github.com/evanxd/blue-yeast
 [WebBluetooth V2 API]: https://wiki.mozilla.org/B2G/Bluetooth/WebBluetooth-v2
 [browserify]: http://browserify.org/ 
+[node.js]: https://nodejs.org/
+[git]: https://git-scm.com/
