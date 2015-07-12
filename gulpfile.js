@@ -64,6 +64,15 @@ gulp.task('lint', ['jsonlint', 'sloc'],
       .pipe(jshint.reporter('default'));
   });
 
+gulp.task('build-ble-serialport', function() {
+  gulp.src('ble-serialport-bundle-entry.js')
+    .pipe(browserify({
+      debug: options.param.debug
+    }))
+    .pipe(rename('ble-serialport-bundle.js'))
+    .pipe(gulp.dest(options.param.build));
+});
+
 gulp.task('build-firmata', function() {
   gulp.src('firmata-bundle-entry.js')
     .pipe(browserify({
@@ -98,7 +107,7 @@ gulp.task('compress', function() {
     .pipe(gulp.dest(options.param.dist));
 });
 
-gulp.task('build', ['build-j5', 'build-firmata']);
+gulp.task('build', ['build-ble-serialport', 'build-j5', 'build-firmata']);
 
 //FIXME: currently compress won't work with a clean build
 gulp.task('dist', ['build'], function() {
