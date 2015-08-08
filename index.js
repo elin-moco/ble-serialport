@@ -33,14 +33,10 @@ BleSerialPort.prototype.connect = function() {
 
     self.device.on('data', function(data) {
       try {
-        console.info('received', self._toHexString(data));
         data = new Uint8Array(data);
-        console.info('received', data);
         if (null !== self.buffer) {
-          console.log('Appending SYSEX response');
           self.buffer = self._concatBuffer(self.buffer, data);
           if (data[data.length - 1] === END_SYSEX) {
-            console.log('Sending SYSEX response');
             //end of SYSEX response
             self.emit('data', self.buffer);
             self.buffer = null;
@@ -48,7 +44,6 @@ BleSerialPort.prototype.connect = function() {
         } else if (data[0] === START_SYSEX &&
           data[data.length - 1] !== END_SYSEX) {
           //SYSEX response incomplete, wait for END_SYSEX byte
-          console.log('Begin of SYSEX response');
           self.buffer = data;
         } else {
           self.emit('data', data);
@@ -69,8 +64,6 @@ BleSerialPort.prototype.open = function(callback) {
 };
 
 BleSerialPort.prototype.write = function(data, callback) {
-
-  console.info('sending data:', this._toHexString(data.buffer));
 
   this.device.send(data);
 };
@@ -110,14 +103,12 @@ BleSerialPort.prototype._parseHexString = function(str) {
   for (var i = 0, j = 0; i < str.length; i += 2, j++) {
     uint8Array[j] = parseInt(str.substr(i, 2), 16);
   }
-  console.log(uint8Array);
   return arrayBuffer;
 };
 
 BleSerialPort.prototype._toHexString = function(arrayBuffer) {
   var str = '';
   if (arrayBuffer) {
-    console.log(arrayBuffer);
     var uint8Array = new Uint8Array(arrayBuffer);
     for (var i = 0; i < uint8Array.length; i++) {
       var b = uint8Array[i].toString(16);
