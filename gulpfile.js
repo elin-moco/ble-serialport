@@ -46,6 +46,7 @@ gulp.task('sloc', function() {
 
 gulp.task('clean', function(cb) {
   return del([
+    'example/fxos-j5/*-bundle.js',
     options.param.build,
     options.param.dist
   ], cb);
@@ -67,6 +68,7 @@ gulp.task('lint', ['jsonlint', 'sloc'],
 gulp.task('build-ble-serialport', function() {
   gulp.src('ble-serialport-bundle-entry.js')
     .pipe(browserify({
+      ignore: ['noble'],
       debug: options.param.debug
     }))
     .pipe(rename('ble-serialport-bundle.js'))
@@ -76,7 +78,7 @@ gulp.task('build-ble-serialport', function() {
 gulp.task('build-firmata', function() {
   gulp.src('firmata-bundle-entry.js')
     .pipe(browserify({
-      ignore: ['debug', 'serialport', 'browser-serialport'],
+      ignore: ['noble', 'debug'],
       debug: options.param.debug
     }))
     .pipe(rename('firmata-bundle.js'))
@@ -86,7 +88,7 @@ gulp.task('build-firmata', function() {
 gulp.task('build-j5', function() {
   gulp.src('j5-bundle-entry.js')
     .pipe(browserify({
-      ignore: ['debug', 'board-io', 'es6-shim'],
+      ignore: ['noble', 'debug', 'board-io', 'es6-shim'],
       debug: options.param.debug
     }))
     .pipe(rename('j5-bundle.js'))
@@ -110,8 +112,10 @@ gulp.task('compress', function() {
 gulp.task('build', ['build-ble-serialport', 'build-j5', 'build-firmata']);
 
 //FIXME: currently compress won't work with a clean build
-gulp.task('dist', ['build'], function() {
-  gulp.start('compress');
+gulp.task('dist', function() {
+  gulp.src('build/*.js')
+    .pipe(gulp.dest('example/fxos-j5/'));
+  //gulp.start('compress');
 });
 
 gulp.task('githooks', function() {

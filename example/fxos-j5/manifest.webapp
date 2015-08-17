@@ -1,0 +1,14 @@
+{
+  "name": "FxOS-J5 Demo",
+  "type": "certified",
+  "launch_path": "/index.html",
+  "icons": {
+    "128": "/icon_128.png"
+  },
+  "description": "A Johnny Five demo on Firefox OS",
+  "default_locale": "en-US",
+  "orientation": "default",
+  "permissions": {
+    "bluetooth":{}
+  }
+}

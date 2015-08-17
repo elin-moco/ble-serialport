@@ -1,9 +1,15 @@
-/* global require, Bluetooth, module */
+/* global process, require, module */
 'use strict';
 
 var util = require('util');
 var stream = require('stream');
-require('blue-yeast');
+if (process) {
+  if (process.browser) {
+    require('blue-yeast');
+  } else {
+    var Bluetooth = require('blue-yeast').Bluetooth;
+  }
+}
 
 function BleSerialPort(options) {
   this.options = options;
@@ -15,7 +21,11 @@ BleSerialPort.prototype.connect = function() {
   var self = this;
   return new Promise(function(resolve, reject) {
     try {
-      self.ble = Bluetooth;
+      if (process.browser) {
+        self.ble = window.Bluetooth;
+      } else {
+        self.ble = Bluetooth;
+      }
       self.device = self.ble.connect(self.options.name, self.options.address);
       self.device.on('connect', function() {
         this.startNotifications();
@@ -23,7 +33,7 @@ BleSerialPort.prototype.connect = function() {
       });
     } catch (exp) {
       reject();
-      console.info('error on message', exp);
+      console.error('error on message', exp);
       self.emit('error', 'error receiving message: ' + exp);
     }
     self.buffer = null;
@@ -49,7 +59,7 @@ BleSerialPort.prototype.connect = function() {
           self.emit('data', data);
         }
       } catch (exp) {
-        console.info('error on message', exp);
+        console.error('error on message', exp);
         self.emit('error', 'error receiving message: ' + exp);
       }
     });
@@ -64,26 +74,22 @@ BleSerialPort.prototype.open = function(callback) {
 };
 
 BleSerialPort.prototype.write = function(data, callback) {
-
   this.device.send(data);
 };
 
 BleSerialPort.prototype.close = function(callback) {
-  console.info('closing');
   if (callback) {
     callback();
   }
 };
 
 BleSerialPort.prototype.flush = function(callback) {
-  console.info('flush');
   if (callback) {
     callback();
   }
 };
 
 BleSerialPort.prototype.drain = function(callback) {
-  console.info('drain');
   if (callback) {
     callback();
   }

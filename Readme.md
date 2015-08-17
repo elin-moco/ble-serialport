@@ -71,6 +71,25 @@ bsp.connect().then(function() {
 And you should see the LED on once you have the webapp(page) opened.
 
 
+# Runing examples
+
+For the fxos-j5 example,
+run following commands to copy bundle script to example/fxos-j5 directory:
+```
+gulp dist
+```
+Modify example/fxos-j5/fxos-j5.js for your device address.  
+Then install app via WebIDE.
+
+For the node-j5 and node-firmata examples, just update the address and run with:
+```
+node node-firmata.js
+```
+or
+```
+node node-j.js
+```
+
 # Support
 
 Currently this implementation uses [WebBluetooth V2 API](https://wiki.mozilla.org/B2G/Bluetooth/WebBluetooth-v2) on FxOS,

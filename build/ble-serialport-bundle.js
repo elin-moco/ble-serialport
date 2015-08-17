@@ -7,12 +7,19 @@
 }(window));
 
 },{"./index":2}],2:[function(require,module,exports){
-/* global require, Bluetooth, module */
+(function (process){
+/* global process, require, module */
 'use strict';
 
 var util = require('util');
 var stream = require('stream');
-require('blue-yeast');
+if (process) {
+  if (process.browser) {
+    require('../blue-yeast');
+  } else {
+    var Bluetooth = require('../blue-yeast').Bluetooth;
+  }
+}
 
 function BleSerialPort(options) {
   this.options = options;
@@ -24,7 +31,11 @@ BleSerialPort.prototype.connect = function() {
   var self = this;
   return new Promise(function(resolve, reject) {
     try {
-      self.ble = Bluetooth;
+      if (process.browser) {
+        self.ble = window.Bluetooth;
+      } else {
+        self.ble = Bluetooth;
+      }
       self.device = self.ble.connect(self.options.name, self.options.address);
       self.device.on('connect', function() {
         this.startNotifications();
@@ -32,7 +43,7 @@ BleSerialPort.prototype.connect = function() {
       });
     } catch (exp) {
       reject();
-      console.info('error on message', exp);
+      console.error('error on message', exp);
       self.emit('error', 'error receiving message: ' + exp);
     }
     self.buffer = null;
@@ -42,14 +53,10 @@ BleSerialPort.prototype.connect = function() {
 
     self.device.on('data', function(data) {
       try {
-        console.info('received', self._toHexString(data));
         data = new Uint8Array(data);
-        console.info('received', data);
         if (null !== self.buffer) {
-          console.log('Appending SYSEX response');
           self.buffer = self._concatBuffer(self.buffer, data);
           if (data[data.length - 1] === END_SYSEX) {
-            console.log('Sending SYSEX response');
             //end of SYSEX response
             self.emit('data', self.buffer);
             self.buffer = null;
@@ -57,13 +64,12 @@ BleSerialPort.prototype.connect = function() {
         } else if (data[0] === START_SYSEX &&
           data[data.length - 1] !== END_SYSEX) {
           //SYSEX response incomplete, wait for END_SYSEX byte
-          console.log('Begin of SYSEX response');
           self.buffer = data;
         } else {
           self.emit('data', data);
         }
       } catch (exp) {
-        console.info('error on message', exp);
+        console.error('error on message', exp);
         self.emit('error', 'error receiving message: ' + exp);
       }
     });
@@ -78,28 +84,22 @@ BleSerialPort.prototype.open = function(callback) {
 };
 
 BleSerialPort.prototype.write = function(data, callback) {
-
-  console.info('sending data:', this._toHexString(data.buffer));
-
   this.device.send(data);
 };
 
 BleSerialPort.prototype.close = function(callback) {
-  console.info('closing');
   if (callback) {
     callback();
   }
 };
 
 BleSerialPort.prototype.flush = function(callback) {
-  console.info('flush');
   if (callback) {
     callback();
   }
 };
 
 BleSerialPort.prototype.drain = function(callback) {
-  console.info('drain');
   if (callback) {
     callback();
   }
@@ -119,14 +119,12 @@ BleSerialPort.prototype._parseHexString = function(str) {
   for (var i = 0, j = 0; i < str.length; i += 2, j++) {
     uint8Array[j] = parseInt(str.substr(i, 2), 16);
   }
-  console.log(uint8Array);
   return arrayBuffer;
 };
 
 BleSerialPort.prototype._toHexString = function(arrayBuffer) {
   var str = '';
   if (arrayBuffer) {
-    console.log(arrayBuffer);
     var uint8Array = new Uint8Array(arrayBuffer);
     for (var i = 0; i < uint8Array.length; i++) {
       var b = uint8Array[i].toString(16);
@@ -143,787 +141,10 @@ module.exports = {
   SerialPort: BleSerialPort
 };
 
-},{"blue-yeast":3,"stream":13,"util":21}],3:[function(require,module,exports){
-(function (process){
-/* global BluetoothDevice */
-'use strict';
-if (process) {
-  var EventEmitter2 = require('eventemitter2').EventEmitter2;
-  require('./bluetooth_device');
-}
-
-(function(exports) {
-  var BLE_SERVICE_UUID = '713d0000-503e-4c75-ba94-3148f18d941e';
-  var BLE_RX_UUID = '713d0003-503e-4c75-ba94-3148f18d941e';
-  var BLE_TX_UUID = '713d0002-503e-4c75-ba94-3148f18d941e';
-  // The timeout to connect next device. It's used for workaround.
-  var CONNECTING_TIMEOUT = 1000;
-  var bluetooth = navigator.mozBluetooth;
-
-  function BlueYeast() {
-    this._devices = [];
-  }
-
-  BlueYeast.prototype.CCCD_UUID = '00002902-0000-1000-8000-00805f9b34fb';
-  BlueYeast.prototype._devices = null;
-  BlueYeast.prototype._scan = null;
-  BlueYeast.prototype._isScanning = false;
-
-  // TODO: Connect multiple devices at one time.
-  BlueYeast.prototype.connect = function(name, address) {
-    var device = new BluetoothDevice(name, address);
-    // TODO: Pop the device from array once it is disconnected.
-    this._devices.push(device);
-    this._startScan();
-    return device;
-  };
-
-  BlueYeast.prototype._startScan = function() {
-    if (this._isScanning) {
-      return;
-    }
-    if (bluetooth.defaultAdapter) {
-      // For stability, we use startDiscovery to instead of startLeScan.
-      return bluetooth.defaultAdapter.startDiscovery([]).then(scan => {
-        this._isScanning = true;
-        this._scan = scan;
-        scan.addEventListener('devicefound',
-          this._handleDevicefound.bind(this));
-      }).catch(() => {
-        this._isScanning = false;
-        this._startScan();
-      });
-    } else {
-      bluetooth.addEventListener('attributechanged',
-        this._handleAttributechanged.bind(this));
-    }
-  };
-
-  // Currently, we cannot stop scan, or the devices don't work correctly.
-  BlueYeast.prototype._stopScan = function() {
-    if (!this._isScanning) {
-      return;
-    }
-    bluetooth.defaultAdapter.stopDiscovery(this._scan).then(() => {
-      this._isScanning = false;
-    });
-  };
-
-  BlueYeast.prototype._handleAttributechanged = function(evt) {
-    for (var key in evt.attrs) {
-      switch (evt.attrs[key]) {
-        case 'defaultAdapter':
-          bluetooth.removeEventListener('attributechanged',
-            this._handleAttributechanged);
-          this._startScan();
-          break;
-      }
-    }
-  };
-
-  BlueYeast.prototype._handleDevicefound = function(evt) {
-    var device = evt.device;
-    var gatt = device.gatt;
-    device = this._devices.find(function(item) {
-      return (item.address === device.address ||
-        item.name === device.name) &&
-        !device.paired;
-    });
-    if (device) {
-      this._stopScan();
-      // XXX: Workaround to connect multiple devices correctly.
-      setTimeout(() => {
-        device.gatt = gatt;
-        gatt.connect().then(() => {
-          this._discoverServices(device, gatt);
-        });
-      }, CONNECTING_TIMEOUT * this._devices.length);
-    }
-  };
-
-  BlueYeast.prototype._discoverServices = function(device, gatt) {
-    return gatt.discoverServices().then(() => {
-      var service = gatt.services.find(function(service) {
-        return service.uuid === BLE_SERVICE_UUID;
-      });
-      var writeCharacteristic =
-        service.characteristics.find(function(characteristic) {
-          return characteristic.uuid === BLE_RX_UUID;
-        });
-      var notifyCharacteristic =
-        service.characteristics.find(function(characteristic) {
-          return characteristic.uuid === BLE_TX_UUID;
-        });
-      device.writeCharacteristic = writeCharacteristic;
-      device.notifyCharacteristic = notifyCharacteristic;
-      device.emit('connect', device);
-    });
-  };
-
-  exports.Bluetooth = new BlueYeast();
-  // For testing.
-  exports.BlueYeast = BlueYeast;
-}(window));
-
 }).call(this,require("IrXUsu"))
-},{"./bluetooth_device":4,"IrXUsu":11,"eventemitter2":5}],4:[function(require,module,exports){
-(function (process){
-/* global Bluetooth, EventEmitter2 */
-'use strict';
-if (process) {
-  var EventEmitter2 = require('eventemitter2').EventEmitter2;
-}
+},{"../blue-yeast":20,"IrXUsu":9,"stream":11,"util":19}],3:[function(require,module,exports){
 
-(function(exports) {
-  function BluetoothDevice(name, address) {
-    this.name = name;
-    this.address = address;
-  }
-
-  BluetoothDevice.prototype = Object.create(EventEmitter2.prototype);
-
-  BluetoothDevice.prototype.gatt = null;
-  BluetoothDevice.prototype.writeCharacteristic = null;
-  BluetoothDevice.prototype.notifyCharacteristic = null;
-  BluetoothDevice.prototype._isNotificationsStarted = false;
-
-  /**
-   * Send data to BLE device in bytes.
-   * @param {String|Uint8Array} data Data to be sent,
-   * accept Uint8Array or String in hex format.
-   * @throws "Data can't be empty" if data is null|undfined
-   * @throws "Unsupported data type" if data is not String|Uint8Array
-   */
-  BluetoothDevice.prototype.send = function(data) {
-    if (data instanceof Uint8Array) {
-      this.writeCharacteristic.writeValue(data.buffer);
-    } else if (data instanceof String) {
-      this.writeCharacteristic.writeValue(this._parseHexString(data));
-    } else if (data) {
-      throw 'Unsupported data type '+data.constructor.name+
-      ', must be Uint8Array or Hex String';
-    } else {
-      throw 'Data cannot be empty';
-    }
-  };
-
-  BluetoothDevice.prototype.startNotifications = function() {
-    if (this._isNotificationsStarted) {
-      return;
-    } else {
-      this._isNotificationsStarted = true;
-    }
-    var characteristic = this.notifyCharacteristic;
-    this.gatt.addEventListener('characteristicchanged', (evt) => {
-      this.emit('data', evt.characteristic.value);
-    });
-    characteristic.startNotifications();
-    var descriptor = characteristic.descriptors.find(function(descriptor) {
-      return descriptor.uuid === Bluetooth.CCCD_UUID;
-    });
-    if (descriptor) {
-      var arrayBuffer = new ArrayBuffer(2);
-      var uint8Array = new Uint8Array(arrayBuffer);
-      uint8Array[0] = 0x01;
-      uint8Array[1] = 0x00;
-      descriptor.writeValue(arrayBuffer);
-    }
-  };
-
-  BluetoothDevice.prototype.stopNotifications = function() {
-    this._isNotificationsStarted = false;
-    this.notifyCharacteristic.stopNotifications();
-  };
-
-  BluetoothDevice.prototype._parseHexString = function(str) {
-    var arrayBuffer = new ArrayBuffer(Math.ceil(str.length / 2));
-    var uint8Array = new Uint8Array(arrayBuffer);
-    for (var i = 0, j = 0; i < str.length; i += 2, j++) {
-      uint8Array[j] = parseInt(str.substr(i, 2), 16);
-    }
-    return arrayBuffer;
-  };
-
-  exports.BluetoothDevice = BluetoothDevice;
-}(window));
-
-}).call(this,require("IrXUsu"))
-},{"IrXUsu":11,"eventemitter2":5}],5:[function(require,module,exports){
-/*!
- * EventEmitter2
- * https://github.com/hij1nx/EventEmitter2
- *
- * Copyright (c) 2013 hij1nx
- * Licensed under the MIT license.
- */
-;!function(undefined) {
-
-  var isArray = Array.isArray ? Array.isArray : function _isArray(obj) {
-    return Object.prototype.toString.call(obj) === "[object Array]";
-  };
-  var defaultMaxListeners = 10;
-
-  function init() {
-    this._events = {};
-    if (this._conf) {
-      configure.call(this, this._conf);
-    }
-  }
-
-  function configure(conf) {
-    if (conf) {
-
-      this._conf = conf;
-
-      conf.delimiter && (this.delimiter = conf.delimiter);
-      conf.maxListeners && (this._events.maxListeners = conf.maxListeners);
-      conf.wildcard && (this.wildcard = conf.wildcard);
-      conf.newListener && (this.newListener = conf.newListener);
-
-      if (this.wildcard) {
-        this.listenerTree = {};
-      }
-    }
-  }
-
-  function EventEmitter(conf) {
-    this._events = {};
-    this.newListener = false;
-    configure.call(this, conf);
-  }
-
-  //
-  // Attention, function return type now is array, always !
-  // It has zero elements if no any matches found and one or more
-  // elements (leafs) if there are matches
-  //
-  function searchListenerTree(handlers, type, tree, i) {
-    if (!tree) {
-      return [];
-    }
-    var listeners=[], leaf, len, branch, xTree, xxTree, isolatedBranch, endReached,
-        typeLength = type.length, currentType = type[i], nextType = type[i+1];
-    if (i === typeLength && tree._listeners) {
-      //
-      // If at the end of the event(s) list and the tree has listeners
-      // invoke those listeners.
-      //
-      if (typeof tree._listeners === 'function') {
-        handlers && handlers.push(tree._listeners);
-        return [tree];
-      } else {
-        for (leaf = 0, len = tree._listeners.length; leaf < len; leaf++) {
-          handlers && handlers.push(tree._listeners[leaf]);
-        }
-        return [tree];
-      }
-    }
-
-    if ((currentType === '*' || currentType === '**') || tree[currentType]) {
-      //
-      // If the event emitted is '*' at this part
-      // or there is a concrete match at this patch
-      //
-      if (currentType === '*') {
-        for (branch in tree) {
-          if (branch !== '_listeners' && tree.hasOwnProperty(branch)) {
-            listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i+1));
-          }
-        }
-        return listeners;
-      } else if(currentType === '**') {
-        endReached = (i+1 === typeLength || (i+2 === typeLength && nextType === '*'));
-        if(endReached && tree._listeners) {
-          // The next element has a _listeners, add it to the handlers.
-          listeners = listeners.concat(searchListenerTree(handlers, type, tree, typeLength));
-        }
-
-        for (branch in tree) {
-          if (branch !== '_listeners' && tree.hasOwnProperty(branch)) {
-            if(branch === '*' || branch === '**') {
-              if(tree[branch]._listeners && !endReached) {
-                listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], typeLength));
-              }
-              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i));
-            } else if(branch === nextType) {
-              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i+2));
-            } else {
-              // No match on this one, shift into the tree but not in the type array.
-              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i));
-            }
-          }
-        }
-        return listeners;
-      }
-
-      listeners = listeners.concat(searchListenerTree(handlers, type, tree[currentType], i+1));
-    }
-
-    xTree = tree['*'];
-    if (xTree) {
-      //
-      // If the listener tree will allow any match for this part,
-      // then recursively explore all branches of the tree
-      //
-      searchListenerTree(handlers, type, xTree, i+1);
-    }
-
-    xxTree = tree['**'];
-    if(xxTree) {
-      if(i < typeLength) {
-        if(xxTree._listeners) {
-          // If we have a listener on a '**', it will catch all, so add its handler.
-          searchListenerTree(handlers, type, xxTree, typeLength);
-        }
-
-        // Build arrays of matching next branches and others.
-        for(branch in xxTree) {
-          if(branch !== '_listeners' && xxTree.hasOwnProperty(branch)) {
-            if(branch === nextType) {
-              // We know the next element will match, so jump twice.
-              searchListenerTree(handlers, type, xxTree[branch], i+2);
-            } else if(branch === currentType) {
-              // Current node matches, move into the tree.
-              searchListenerTree(handlers, type, xxTree[branch], i+1);
-            } else {
-              isolatedBranch = {};
-              isolatedBranch[branch] = xxTree[branch];
-              searchListenerTree(handlers, type, { '**': isolatedBranch }, i+1);
-            }
-          }
-        }
-      } else if(xxTree._listeners) {
-        // We have reached the end and still on a '**'
-        searchListenerTree(handlers, type, xxTree, typeLength);
-      } else if(xxTree['*'] && xxTree['*']._listeners) {
-        searchListenerTree(handlers, type, xxTree['*'], typeLength);
-      }
-    }
-
-    return listeners;
-  }
-
-  function growListenerTree(type, listener) {
-
-    type = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
-
-    //
-    // Looks for two consecutive '**', if so, don't add the event at all.
-    //
-    for(var i = 0, len = type.length; i+1 < len; i++) {
-      if(type[i] === '**' && type[i+1] === '**') {
-        return;
-      }
-    }
-
-    var tree = this.listenerTree;
-    var name = type.shift();
-
-    while (name) {
-
-      if (!tree[name]) {
-        tree[name] = {};
-      }
-
-      tree = tree[name];
-
-      if (type.length === 0) {
-
-        if (!tree._listeners) {
-          tree._listeners = listener;
-        }
-        else if(typeof tree._listeners === 'function') {
-          tree._listeners = [tree._listeners, listener];
-        }
-        else if (isArray(tree._listeners)) {
-
-          tree._listeners.push(listener);
-
-          if (!tree._listeners.warned) {
-
-            var m = defaultMaxListeners;
-
-            if (typeof this._events.maxListeners !== 'undefined') {
-              m = this._events.maxListeners;
-            }
-
-            if (m > 0 && tree._listeners.length > m) {
-
-              tree._listeners.warned = true;
-              console.error('(node) warning: possible EventEmitter memory ' +
-                            'leak detected. %d listeners added. ' +
-                            'Use emitter.setMaxListeners() to increase limit.',
-                            tree._listeners.length);
-              console.trace();
-            }
-          }
-        }
-        return true;
-      }
-      name = type.shift();
-    }
-    return true;
-  }
-
-  // By default EventEmitters will print a warning if more than
-  // 10 listeners are added to it. This is a useful default which
-  // helps finding memory leaks.
-  //
-  // Obviously not all Emitters should be limited to 10. This function allows
-  // that to be increased. Set to zero for unlimited.
-
-  EventEmitter.prototype.delimiter = '.';
-
-  EventEmitter.prototype.setMaxListeners = function(n) {
-    this._events || init.call(this);
-    this._events.maxListeners = n;
-    if (!this._conf) this._conf = {};
-    this._conf.maxListeners = n;
-  };
-
-  EventEmitter.prototype.event = '';
-
-  EventEmitter.prototype.once = function(event, fn) {
-    this.many(event, 1, fn);
-    return this;
-  };
-
-  EventEmitter.prototype.many = function(event, ttl, fn) {
-    var self = this;
-
-    if (typeof fn !== 'function') {
-      throw new Error('many only accepts instances of Function');
-    }
-
-    function listener() {
-      if (--ttl === 0) {
-        self.off(event, listener);
-      }
-      fn.apply(this, arguments);
-    }
-
-    listener._origin = fn;
-
-    this.on(event, listener);
-
-    return self;
-  };
-
-  EventEmitter.prototype.emit = function() {
-
-    this._events || init.call(this);
-
-    var type = arguments[0];
-
-    if (type === 'newListener' && !this.newListener) {
-      if (!this._events.newListener) { return false; }
-    }
-
-    // Loop through the *_all* functions and invoke them.
-    if (this._all) {
-      var l = arguments.length;
-      var args = new Array(l - 1);
-      for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
-      for (i = 0, l = this._all.length; i < l; i++) {
-        this.event = type;
-        this._all[i].apply(this, args);
-      }
-    }
-
-    // If there is no 'error' event listener then throw.
-    if (type === 'error') {
-
-      if (!this._all &&
-        !this._events.error &&
-        !(this.wildcard && this.listenerTree.error)) {
-
-        if (arguments[1] instanceof Error) {
-          throw arguments[1]; // Unhandled 'error' event
-        } else {
-          throw new Error("Uncaught, unspecified 'error' event.");
-        }
-        return false;
-      }
-    }
-
-    var handler;
-
-    if(this.wildcard) {
-      handler = [];
-      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
-      searchListenerTree.call(this, handler, ns, this.listenerTree, 0);
-    }
-    else {
-      handler = this._events[type];
-    }
-
-    if (typeof handler === 'function') {
-      this.event = type;
-      if (arguments.length === 1) {
-        handler.call(this);
-      }
-      else if (arguments.length > 1)
-        switch (arguments.length) {
-          case 2:
-            handler.call(this, arguments[1]);
-            break;
-          case 3:
-            handler.call(this, arguments[1], arguments[2]);
-            break;
-          // slower
-          default:
-            var l = arguments.length;
-            var args = new Array(l - 1);
-            for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
-            handler.apply(this, args);
-        }
-      return true;
-    }
-    else if (handler) {
-      var l = arguments.length;
-      var args = new Array(l - 1);
-      for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
-
-      var listeners = handler.slice();
-      for (var i = 0, l = listeners.length; i < l; i++) {
-        this.event = type;
-        listeners[i].apply(this, args);
-      }
-      return (listeners.length > 0) || !!this._all;
-    }
-    else {
-      return !!this._all;
-    }
-
-  };
-
-  EventEmitter.prototype.on = function(type, listener) {
-
-    if (typeof type === 'function') {
-      this.onAny(type);
-      return this;
-    }
-
-    if (typeof listener !== 'function') {
-      throw new Error('on only accepts instances of Function');
-    }
-    this._events || init.call(this);
-
-    // To avoid recursion in the case that type == "newListeners"! Before
-    // adding it to the listeners, first emit "newListeners".
-    this.emit('newListener', type, listener);
-
-    if(this.wildcard) {
-      growListenerTree.call(this, type, listener);
-      return this;
-    }
-
-    if (!this._events[type]) {
-      // Optimize the case of one listener. Don't need the extra array object.
-      this._events[type] = listener;
-    }
-    else if(typeof this._events[type] === 'function') {
-      // Adding the second element, need to change to array.
-      this._events[type] = [this._events[type], listener];
-    }
-    else if (isArray(this._events[type])) {
-      // If we've already got an array, just append.
-      this._events[type].push(listener);
-
-      // Check for listener leak
-      if (!this._events[type].warned) {
-
-        var m = defaultMaxListeners;
-
-        if (typeof this._events.maxListeners !== 'undefined') {
-          m = this._events.maxListeners;
-        }
-
-        if (m > 0 && this._events[type].length > m) {
-
-          this._events[type].warned = true;
-          console.error('(node) warning: possible EventEmitter memory ' +
-                        'leak detected. %d listeners added. ' +
-                        'Use emitter.setMaxListeners() to increase limit.',
-                        this._events[type].length);
-          console.trace();
-        }
-      }
-    }
-    return this;
-  };
-
-  EventEmitter.prototype.onAny = function(fn) {
-
-    if (typeof fn !== 'function') {
-      throw new Error('onAny only accepts instances of Function');
-    }
-
-    if(!this._all) {
-      this._all = [];
-    }
-
-    // Add the function to the event listener collection.
-    this._all.push(fn);
-    return this;
-  };
-
-  EventEmitter.prototype.addListener = EventEmitter.prototype.on;
-
-  EventEmitter.prototype.off = function(type, listener) {
-    if (typeof listener !== 'function') {
-      throw new Error('removeListener only takes instances of Function');
-    }
-
-    var handlers,leafs=[];
-
-    if(this.wildcard) {
-      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
-      leafs = searchListenerTree.call(this, null, ns, this.listenerTree, 0);
-    }
-    else {
-      // does not use listeners(), so no side effect of creating _events[type]
-      if (!this._events[type]) return this;
-      handlers = this._events[type];
-      leafs.push({_listeners:handlers});
-    }
-
-    for (var iLeaf=0; iLeaf<leafs.length; iLeaf++) {
-      var leaf = leafs[iLeaf];
-      handlers = leaf._listeners;
-      if (isArray(handlers)) {
-
-        var position = -1;
-
-        for (var i = 0, length = handlers.length; i < length; i++) {
-          if (handlers[i] === listener ||
-            (handlers[i].listener && handlers[i].listener === listener) ||
-            (handlers[i]._origin && handlers[i]._origin === listener)) {
-            position = i;
-            break;
-          }
-        }
-
-        if (position < 0) {
-          continue;
-        }
-
-        if(this.wildcard) {
-          leaf._listeners.splice(position, 1);
-        }
-        else {
-          this._events[type].splice(position, 1);
-        }
-
-        if (handlers.length === 0) {
-          if(this.wildcard) {
-            delete leaf._listeners;
-          }
-          else {
-            delete this._events[type];
-          }
-        }
-        return this;
-      }
-      else if (handlers === listener ||
-        (handlers.listener && handlers.listener === listener) ||
-        (handlers._origin && handlers._origin === listener)) {
-        if(this.wildcard) {
-          delete leaf._listeners;
-        }
-        else {
-          delete this._events[type];
-        }
-      }
-    }
-
-    return this;
-  };
-
-  EventEmitter.prototype.offAny = function(fn) {
-    var i = 0, l = 0, fns;
-    if (fn && this._all && this._all.length > 0) {
-      fns = this._all;
-      for(i = 0, l = fns.length; i < l; i++) {
-        if(fn === fns[i]) {
-          fns.splice(i, 1);
-          return this;
-        }
-      }
-    } else {
-      this._all = [];
-    }
-    return this;
-  };
-
-  EventEmitter.prototype.removeListener = EventEmitter.prototype.off;
-
-  EventEmitter.prototype.removeAllListeners = function(type) {
-    if (arguments.length === 0) {
-      !this._events || init.call(this);
-      return this;
-    }
-
-    if(this.wildcard) {
-      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
-      var leafs = searchListenerTree.call(this, null, ns, this.listenerTree, 0);
-
-      for (var iLeaf=0; iLeaf<leafs.length; iLeaf++) {
-        var leaf = leafs[iLeaf];
-        leaf._listeners = null;
-      }
-    }
-    else {
-      if (!this._events[type]) return this;
-      this._events[type] = null;
-    }
-    return this;
-  };
-
-  EventEmitter.prototype.listeners = function(type) {
-    if(this.wildcard) {
-      var handlers = [];
-      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
-      searchListenerTree.call(this, handlers, ns, this.listenerTree, 0);
-      return handlers;
-    }
-
-    this._events || init.call(this);
-
-    if (!this._events[type]) this._events[type] = [];
-    if (!isArray(this._events[type])) {
-      this._events[type] = [this._events[type]];
-    }
-    return this._events[type];
-  };
-
-  EventEmitter.prototype.listenersAny = function() {
-
-    if(this._all) {
-      return this._all;
-    }
-    else {
-      return [];
-    }
-
-  };
-
-  if (typeof define === 'function' && define.amd) {
-     // AMD. Register as an anonymous module.
-    define(function() {
-      return EventEmitter;
-    });
-  } else if (typeof exports === 'object') {
-    // CommonJS
-    exports.EventEmitter2 = EventEmitter;
-  }
-  else {
-    // Browser global.
-    window.EventEmitter2 = EventEmitter;
-  }
-}();
-
-},{}],6:[function(require,module,exports){
+},{}],4:[function(require,module,exports){
 /*!
  * The buffer module from node.js, for the browser.
  *
@@ -2034,7 +1255,7 @@ function assert (test, message) {
   if (!test) throw new Error(message || 'Failed assertion')
 }
 
-},{"base64-js":7,"ieee754":8}],7:[function(require,module,exports){
+},{"base64-js":5,"ieee754":6}],5:[function(require,module,exports){
 var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 ;(function (exports) {
@@ -2160,7 +1381,7 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 	exports.fromByteArray = uint8ToBase64
 }(typeof exports === 'undefined' ? (this.base64js = {}) : exports))
 
-},{}],8:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
   var eLen = nBytes * 8 - mLen - 1
@@ -2246,7 +1467,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],9:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2549,7 +1770,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],10:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -2574,7 +1795,7 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],11:[function(require,module,exports){
+},{}],9:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -2639,7 +1860,7 @@ process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
 
-},{}],12:[function(require,module,exports){
+},{}],10:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2713,7 +1934,7 @@ function onend() {
   });
 }
 
-},{"./readable.js":16,"./writable.js":18,"inherits":10,"process/browser.js":14}],13:[function(require,module,exports){
+},{"./readable.js":14,"./writable.js":16,"inherits":8,"process/browser.js":12}],11:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2842,7 +2063,7 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"./duplex.js":12,"./passthrough.js":15,"./readable.js":16,"./transform.js":17,"./writable.js":18,"events":9,"inherits":10}],14:[function(require,module,exports){
+},{"./duplex.js":10,"./passthrough.js":13,"./readable.js":14,"./transform.js":15,"./writable.js":16,"events":7,"inherits":8}],12:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -2897,7 +2118,7 @@ process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
 
-},{}],15:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2940,7 +2161,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./transform.js":17,"inherits":10}],16:[function(require,module,exports){
+},{"./transform.js":15,"inherits":8}],14:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -3877,7 +3098,7 @@ function indexOf (xs, x) {
 }
 
 }).call(this,require("IrXUsu"))
-},{"./index.js":13,"IrXUsu":11,"buffer":6,"events":9,"inherits":10,"process/browser.js":14,"string_decoder":19}],17:[function(require,module,exports){
+},{"./index.js":11,"IrXUsu":9,"buffer":4,"events":7,"inherits":8,"process/browser.js":12,"string_decoder":17}],15:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4083,7 +3304,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./duplex.js":12,"inherits":10}],18:[function(require,module,exports){
+},{"./duplex.js":10,"inherits":8}],16:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4471,7 +3692,7 @@ function endWritable(stream, state, cb) {
   state.ended = true;
 }
 
-},{"./index.js":13,"buffer":6,"inherits":10,"process/browser.js":14}],19:[function(require,module,exports){
+},{"./index.js":11,"buffer":4,"inherits":8,"process/browser.js":12}],17:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4664,14 +3885,14 @@ function base64DetectIncompleteChar(buffer) {
   return incomplete;
 }
 
-},{"buffer":6}],20:[function(require,module,exports){
+},{"buffer":4}],18:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],21:[function(require,module,exports){
+},{}],19:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -5261,4 +4482,1004 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require("IrXUsu"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":20,"IrXUsu":11,"inherits":10}]},{},[1])
+},{"./support/isBuffer":18,"IrXUsu":9,"inherits":8}],20:[function(require,module,exports){
+(function (process){
+'use strict';
+
+if (process) {
+  if (process.browser) {
+    require('./fxos/blue_yeast');
+  }
+  else {
+    exports.Bluetooth = require('./node/blue_yeast').Bluetooth;
+  }
+}
+
+}).call(this,require("IrXUsu"))
+},{"./fxos/blue_yeast":21,"./node/blue_yeast":23,"IrXUsu":9}],21:[function(require,module,exports){
+(function (process){
+/* global BluetoothDevice */
+'use strict';
+if (process) {
+  var EventEmitter2 = require('eventemitter2').EventEmitter2;
+  require('./bluetooth_device');
+}
+
+(function(exports) {
+  var BLE_SERVICE_UUID = '713d0000-503e-4c75-ba94-3148f18d941e';
+  var BLE_RX_UUID = '713d0003-503e-4c75-ba94-3148f18d941e';
+  var BLE_TX_UUID = '713d0002-503e-4c75-ba94-3148f18d941e';
+  // The timeout to connect next device. It's used for workaround.
+  var CONNECTING_TIMEOUT = 1000;
+  var bluetooth = navigator.mozBluetooth;
+
+  function BlueYeast() {
+    this._devices = [];
+  }
+
+  BlueYeast.prototype.CCCD_UUID = '00002902-0000-1000-8000-00805f9b34fb';
+  BlueYeast.prototype._devices = null;
+  BlueYeast.prototype._scan = null;
+  BlueYeast.prototype._isScanning = false;
+
+  // TODO: Connect multiple devices at one time.
+  BlueYeast.prototype.connect = function(name, address) {
+    var device = new BluetoothDevice(name, address);
+    // TODO: Pop the device from array once it is disconnected.
+    this._devices.push(device);
+    this._startScan();
+    return device;
+  };
+
+  BlueYeast.prototype._startScan = function() {
+    if (this._isScanning) {
+      return;
+    }
+    if (bluetooth.defaultAdapter) {
+      // For stability, we use startDiscovery to instead of startLeScan.
+      return bluetooth.defaultAdapter.startDiscovery([]).then(scan => {
+        this._isScanning = true;
+        this._scan = scan;
+        scan.addEventListener('devicefound',
+          this._handleDevicefound.bind(this));
+      }).catch(() => {
+        this._isScanning = false;
+        this._startScan();
+      });
+    } else {
+      bluetooth.addEventListener('attributechanged',
+        this._handleAttributechanged.bind(this));
+    }
+  };
+
+  // Currently, we cannot stop scan, or the devices don't work correctly.
+  BlueYeast.prototype._stopScan = function() {
+    if (!this._isScanning) {
+      return;
+    }
+    bluetooth.defaultAdapter.stopDiscovery(this._scan).then(() => {
+      this._isScanning = false;
+    });
+  };
+
+  BlueYeast.prototype._handleAttributechanged = function(evt) {
+    for (var key in evt.attrs) {
+      switch (evt.attrs[key]) {
+        case 'defaultAdapter':
+          bluetooth.removeEventListener('attributechanged',
+            this._handleAttributechanged);
+          this._startScan();
+          break;
+      }
+    }
+  };
+
+  BlueYeast.prototype._handleDevicefound = function(evt) {
+    var device = evt.device;
+    var gatt = device.gatt;
+    device = this._devices.find(function(item) {
+      return (item.address === device.address ||
+        item.name === device.name) &&
+        !device.paired;
+    });
+    if (device) {
+      this._stopScan();
+      // XXX: Workaround to connect multiple devices correctly.
+      setTimeout(() => {
+        device.gatt = gatt;
+        gatt.connect().then(() => {
+          this._discoverServices(device, gatt);
+        });
+      }, CONNECTING_TIMEOUT * this._devices.length);
+    }
+  };
+
+  BlueYeast.prototype._discoverServices = function(device, gatt) {
+    return gatt.discoverServices().then(() => {
+      var service = gatt.services.find(function(service) {
+        return service.uuid === BLE_SERVICE_UUID;
+      });
+      var writeCharacteristic =
+        service.characteristics.find(function(characteristic) {
+          return characteristic.uuid === BLE_RX_UUID;
+        });
+      var notifyCharacteristic =
+        service.characteristics.find(function(characteristic) {
+          return characteristic.uuid === BLE_TX_UUID;
+        });
+      device.writeCharacteristic = writeCharacteristic;
+      device.notifyCharacteristic = notifyCharacteristic;
+      device.emit('connect', device);
+    });
+  };
+
+  exports.Bluetooth = new BlueYeast();
+  // For testing.
+  exports.BlueYeast = BlueYeast;
+}(window));
+
+}).call(this,require("IrXUsu"))
+},{"./bluetooth_device":22,"IrXUsu":9,"eventemitter2":25}],22:[function(require,module,exports){
+(function (process,Buffer){
+/* global Bluetooth, EventEmitter2 */
+'use strict';
+if (process) {
+  var EventEmitter2 = require('eventemitter2').EventEmitter2;
+}
+
+(function(exports) {
+  function BluetoothDevice(name, address) {
+    this.name = name;
+    this.address = address;
+  }
+
+  BluetoothDevice.prototype = Object.create(EventEmitter2.prototype);
+
+  BluetoothDevice.prototype.gatt = null;
+  BluetoothDevice.prototype.writeCharacteristic = null;
+  BluetoothDevice.prototype.notifyCharacteristic = null;
+  BluetoothDevice.prototype._isNotificationsStarted = false;
+
+  /**
+   * Send data to BLE device in bytes.
+   * @param {String|Uint8Array} data Data to be sent,
+   * accept Uint8Array or String in hex format.
+   * @throws "Data can't be empty" if data is null|undfined
+   * @throws "Unsupported data type" if data is not String|Uint8Array
+   */
+  BluetoothDevice.prototype.send = function(data) {
+    if (data instanceof Uint8Array) {
+      this.writeCharacteristic.writeValue(data.buffer);
+    } else if (data instanceof Buffer) {
+      this.writeCharacteristic.write(data, false);
+    } else if (data instanceof String) {
+      this.writeCharacteristic.writeValue(this._parseHexString(data));
+    } else if (data) {
+      throw 'Unsupported data type ' + data.constructor.name +
+        ', must be Uint8Array or Hex String';
+    } else {
+      throw 'Data cannot be empty';
+    }
+  };
+
+  BluetoothDevice.prototype.startNotifications = function() {
+    if (this._isNotificationsStarted) {
+      return;
+    } else {
+      this._isNotificationsStarted = true;
+    }
+    var characteristic = this.notifyCharacteristic;
+    this.gatt.addEventListener('characteristicchanged', (evt) => {
+      this.emit('data', evt.characteristic.value);
+    });
+    characteristic.startNotifications();
+    var descriptor = characteristic.descriptors.find(function(descriptor) {
+      return descriptor.uuid === Bluetooth.CCCD_UUID;
+    });
+    if (descriptor) {
+      var arrayBuffer = new ArrayBuffer(2);
+      var uint8Array = new Uint8Array(arrayBuffer);
+      uint8Array[0] = 0x01;
+      uint8Array[1] = 0x00;
+      descriptor.writeValue(arrayBuffer);
+    }
+  };
+
+  BluetoothDevice.prototype.stopNotifications = function() {
+    this._isNotificationsStarted = false;
+    this.notifyCharacteristic.stopNotifications();
+  };
+
+  BluetoothDevice.prototype._parseHexString = function(str) {
+    var arrayBuffer = new ArrayBuffer(Math.ceil(str.length / 2));
+    var uint8Array = new Uint8Array(arrayBuffer);
+    for (var i = 0, j = 0; i < str.length; i += 2, j++) {
+      uint8Array[j] = parseInt(str.substr(i, 2), 16);
+    }
+    return arrayBuffer;
+  };
+
+  exports.BluetoothDevice = BluetoothDevice;
+}(window));
+
+}).call(this,require("IrXUsu"),require("buffer").Buffer)
+},{"IrXUsu":9,"buffer":4,"eventemitter2":25}],23:[function(require,module,exports){
+/* global module */
+'use strict';
+
+var noble = require('noble');
+var EventEmitter2 = require('eventemitter2').EventEmitter2;
+var BluetoothDevice = require('./bluetooth_device').BluetoothDevice;
+
+(function(exports) {
+  var BLE_SERVICE_UUID = '713d0000503e4c75ba943148f18d941e';
+  var BLE_RX_UUID = '713d0003503e4c75ba943148f18d941e';
+  var BLE_TX_UUID = '713d0002503e4c75ba943148f18d941e';
+  //var BLE_SERVICE_UUID = '713d0000-503e-4c75-ba94-3148f18d941e';
+  //var BLE_RX_UUID = '713d0003-503e-4c75-ba94-3148f18d941e';
+  //var BLE_TX_UUID = '713d0002-503e-4c75-ba94-3148f18d941e';
+  // The timeout to connect next device. It's used for workaround.
+  var CONNECTING_TIMEOUT = 1000;
+  //var bluetooth = navigator.mozBluetooth;
+  BlueYeast.prototype.CCCD_UUID = '00002902-0000-1000-8000-00805f9b34fb';
+  BlueYeast.prototype._devices = null;
+  BlueYeast.prototype._scan = null;
+  BlueYeast.prototype._isScanning = false;
+
+
+  function BlueYeast() {
+    this._devices = [];
+  }
+
+  // TODO: Connect multiple devices at one time.
+  BlueYeast.prototype.connect = function(name, address) {
+    var device = new BluetoothDevice(name, address);
+    // TODO: Pop the device from array once it is disconnected.
+    this._devices.push(device);
+    this._startScan();
+    return device;
+  };
+
+  BlueYeast.prototype._startScan = function() {
+    if (this._isScanning) {
+      return;
+    }
+
+    this._isScanning = true;
+    if (noble.state == 'poweredOn') {
+      noble.on('discover', this._handleDevicefound.bind(this));
+      noble.startScanning();
+    }
+    else {
+      noble.on('stateChange', this._handleStatechanged.bind(this));
+    }
+
+  };
+
+  // Currently, we cannot stop scan, or the devices don't work correctly.
+  BlueYeast.prototype._stopScan = function() {
+    if (!this._isScanning) {
+      return;
+    }
+    this._isScanning = false;
+    noble.stopScanning();
+    //noble.removeEventListener('discover', this._handleDevicefound);
+  };
+
+  BlueYeast.prototype._handleStatechanged = function() {
+    if (noble.state == 'poweredOn') {
+      noble.startScanning();
+      noble.on('discover', this._handleDevicefound.bind(this));
+      //noble.removeEventListener('stateChange', this._handleStatechanged);
+    }
+  };
+
+  BlueYeast.prototype._handleDevicefound = function(peripheral) {
+    var devices = this._devices.filter(function(item) {
+      return (item.address === peripheral.address ||
+        item.name === peripheral.advertisement.localName) &&
+        peripheral.state !== 'connected';
+    });
+    if (devices && devices.length > 0) {
+      this._stopScan();
+      var self = this;
+      // XXX: Workaround to connect multiple devices correctly.
+      setTimeout(function() {
+        devices[0].client = peripheral;
+        peripheral.connect(function() {
+          self._discoverServices(devices[0], peripheral);
+        });
+      }, CONNECTING_TIMEOUT * this._devices.length);
+    }
+  };
+
+  BlueYeast.prototype._discoverServices = function(device, client) {
+    try {
+      client.discoverServices(
+        [BLE_SERVICE_UUID],
+        function(error, services) {
+          services[0].discoverCharacteristics([BLE_RX_UUID, BLE_TX_UUID], function(error, characteristics) {
+            device.writeCharacteristic = characteristics[0];
+            device.notifyCharacteristic = characteristics[1];
+            device.emit('connect', device);
+          });
+      });
+    } catch(e) {
+      console.error(e);
+    }
+  };
+
+  exports.Bluetooth = new BlueYeast();
+  // For testing.
+  exports.BlueYeast = BlueYeast;
+}(exports));
+
+},{"./bluetooth_device":24,"eventemitter2":25,"noble":3}],24:[function(require,module,exports){
+(function (process,Buffer){
+/* global module, Bluetooth, EventEmitter2 */
+'use strict';
+if (process) {
+  var EventEmitter2 = require('eventemitter2').EventEmitter2;
+}
+
+(function(exports) {
+  function BluetoothDevice(name, address) {
+    this.name = name;
+    this.address = address;
+  }
+
+  BluetoothDevice.prototype = Object.create(EventEmitter2.prototype);
+
+  BluetoothDevice.prototype.client = null;
+  BluetoothDevice.prototype.writeCharacteristic = null;
+  BluetoothDevice.prototype.notifyCharacteristic = null;
+  BluetoothDevice.prototype._isNotificationsStarted = false;
+
+  /**
+   * Send data to BLE device in bytes.
+   * @param {String|Uint8Array} data Data to be sent,
+   * accept Uint8Array or String in hex format.
+   * @throws "Data can't be empty" if data is null|undfined
+   * @throws "Unsupported data type" if data is not String|Uint8Array
+   */
+  BluetoothDevice.prototype.send = function(data) {
+    if (data instanceof Uint8Array) {
+      this.writeCharacteristic.write(this._toBuffer(data.buffer), false);
+    } else if (data instanceof Buffer) {
+      this.writeCharacteristic.write(data, false);
+    } else if (data instanceof String) {
+      this.writeCharacteristic.write(this._parseHexString(data), false);
+    } else if (data) {
+      throw 'Unsupported data type ' + data.constructor.name +
+      ', must be Uint8Array or Hex String';
+    } else {
+      throw 'Data cannot be empty';
+    }
+  };
+
+  BluetoothDevice.prototype.startNotifications = function() {
+    if (this._isNotificationsStarted) {
+      return;
+    }
+    this._isNotificationsStarted = true;
+    this.notifyCharacteristic.notify(true);
+    var self = this;
+    this.notifyCharacteristic.on('data', function(data, isNotification) {
+      if (isNotification) {
+        self.emit('data', new Uint8Array(self._toArrayBuffer(data)));
+      }
+    });
+  };
+
+  BluetoothDevice.prototype.stopNotifications = function() {
+    this._isNotificationsStarted = false;
+    this.notifyCharacteristic.notify(false);
+  };
+
+  BluetoothDevice.prototype._parseHexString = function(str) {
+    var arrayBuffer = new ArrayBuffer(Math.ceil(str.length / 2));
+    var uint8Array = new Uint8Array(arrayBuffer);
+    for (var i = 0, j = 0; i < str.length; i += 2, j++) {
+      uint8Array[j] = parseInt(str.substr(i, 2), 16);
+    }
+    return this._toBuffer(arrayBuffer);
+  };
+
+  BluetoothDevice.prototype._toBuffer = function(ab) {
+    var buffer = new Buffer(ab.byteLength);
+    var view = new Uint8Array(ab);
+    for (var i = 0; i < buffer.length; ++i) {
+      buffer[i] = view[i];
+    }
+    return buffer;
+  };
+
+  BluetoothDevice.prototype._toArrayBuffer = function(buffer) {
+    var ab = new ArrayBuffer(buffer.length);
+    var view = new Uint8Array(ab);
+    for (var i = 0; i < buffer.length; ++i) {
+      view[i] = buffer[i];
+    }
+    return ab;
+  };
+
+  exports.BluetoothDevice = BluetoothDevice;
+}(exports));
+
+}).call(this,require("IrXUsu"),require("buffer").Buffer)
+},{"IrXUsu":9,"buffer":4,"eventemitter2":25}],25:[function(require,module,exports){
+/*!
+ * EventEmitter2
+ * https://github.com/hij1nx/EventEmitter2
+ *
+ * Copyright (c) 2013 hij1nx
+ * Licensed under the MIT license.
+ */
+;!function(undefined) {
+
+  var isArray = Array.isArray ? Array.isArray : function _isArray(obj) {
+    return Object.prototype.toString.call(obj) === "[object Array]";
+  };
+  var defaultMaxListeners = 10;
+
+  function init() {
+    this._events = {};
+    if (this._conf) {
+      configure.call(this, this._conf);
+    }
+  }
+
+  function configure(conf) {
+    if (conf) {
+
+      this._conf = conf;
+
+      conf.delimiter && (this.delimiter = conf.delimiter);
+      conf.maxListeners && (this._events.maxListeners = conf.maxListeners);
+      conf.wildcard && (this.wildcard = conf.wildcard);
+      conf.newListener && (this.newListener = conf.newListener);
+
+      if (this.wildcard) {
+        this.listenerTree = {};
+      }
+    }
+  }
+
+  function EventEmitter(conf) {
+    this._events = {};
+    this.newListener = false;
+    configure.call(this, conf);
+  }
+
+  //
+  // Attention, function return type now is array, always !
+  // It has zero elements if no any matches found and one or more
+  // elements (leafs) if there are matches
+  //
+  function searchListenerTree(handlers, type, tree, i) {
+    if (!tree) {
+      return [];
+    }
+    var listeners=[], leaf, len, branch, xTree, xxTree, isolatedBranch, endReached,
+        typeLength = type.length, currentType = type[i], nextType = type[i+1];
+    if (i === typeLength && tree._listeners) {
+      //
+      // If at the end of the event(s) list and the tree has listeners
+      // invoke those listeners.
+      //
+      if (typeof tree._listeners === 'function') {
+        handlers && handlers.push(tree._listeners);
+        return [tree];
+      } else {
+        for (leaf = 0, len = tree._listeners.length; leaf < len; leaf++) {
+          handlers && handlers.push(tree._listeners[leaf]);
+        }
+        return [tree];
+      }
+    }
+
+    if ((currentType === '*' || currentType === '**') || tree[currentType]) {
+      //
+      // If the event emitted is '*' at this part
+      // or there is a concrete match at this patch
+      //
+      if (currentType === '*') {
+        for (branch in tree) {
+          if (branch !== '_listeners' && tree.hasOwnProperty(branch)) {
+            listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i+1));
+          }
+        }
+        return listeners;
+      } else if(currentType === '**') {
+        endReached = (i+1 === typeLength || (i+2 === typeLength && nextType === '*'));
+        if(endReached && tree._listeners) {
+          // The next element has a _listeners, add it to the handlers.
+          listeners = listeners.concat(searchListenerTree(handlers, type, tree, typeLength));
+        }
+
+        for (branch in tree) {
+          if (branch !== '_listeners' && tree.hasOwnProperty(branch)) {
+            if(branch === '*' || branch === '**') {
+              if(tree[branch]._listeners && !endReached) {
+                listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], typeLength));
+              }
+              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i));
+            } else if(branch === nextType) {
+              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i+2));
+            } else {
+              // No match on this one, shift into the tree but not in the type array.
+              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i));
+            }
+          }
+        }
+        return listeners;
+      }
+
+      listeners = listeners.concat(searchListenerTree(handlers, type, tree[currentType], i+1));
+    }
+
+    xTree = tree['*'];
+    if (xTree) {
+      //
+      // If the listener tree will allow any match for this part,
+      // then recursively explore all branches of the tree
+      //
+      searchListenerTree(handlers, type, xTree, i+1);
+    }
+
+    xxTree = tree['**'];
+    if(xxTree) {
+      if(i < typeLength) {
+        if(xxTree._listeners) {
+          // If we have a listener on a '**', it will catch all, so add its handler.
+          searchListenerTree(handlers, type, xxTree, typeLength);
+        }
+
+        // Build arrays of matching next branches and others.
+        for(branch in xxTree) {
+          if(branch !== '_listeners' && xxTree.hasOwnProperty(branch)) {
+            if(branch === nextType) {
+              // We know the next element will match, so jump twice.
+              searchListenerTree(handlers, type, xxTree[branch], i+2);
+            } else if(branch === currentType) {
+              // Current node matches, move into the tree.
+              searchListenerTree(handlers, type, xxTree[branch], i+1);
+            } else {
+              isolatedBranch = {};
+              isolatedBranch[branch] = xxTree[branch];
+              searchListenerTree(handlers, type, { '**': isolatedBranch }, i+1);
+            }
+          }
+        }
+      } else if(xxTree._listeners) {
+        // We have reached the end and still on a '**'
+        searchListenerTree(handlers, type, xxTree, typeLength);
+      } else if(xxTree['*'] && xxTree['*']._listeners) {
+        searchListenerTree(handlers, type, xxTree['*'], typeLength);
+      }
+    }
+
+    return listeners;
+  }
+
+  function growListenerTree(type, listener) {
+
+    type = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
+
+    //
+    // Looks for two consecutive '**', if so, don't add the event at all.
+    //
+    for(var i = 0, len = type.length; i+1 < len; i++) {
+      if(type[i] === '**' && type[i+1] === '**') {
+        return;
+      }
+    }
+
+    var tree = this.listenerTree;
+    var name = type.shift();
+
+    while (name) {
+
+      if (!tree[name]) {
+        tree[name] = {};
+      }
+
+      tree = tree[name];
+
+      if (type.length === 0) {
+
+        if (!tree._listeners) {
+          tree._listeners = listener;
+        }
+        else if(typeof tree._listeners === 'function') {
+          tree._listeners = [tree._listeners, listener];
+        }
+        else if (isArray(tree._listeners)) {
+
+          tree._listeners.push(listener);
+
+          if (!tree._listeners.warned) {
+
+            var m = defaultMaxListeners;
+
+            if (typeof this._events.maxListeners !== 'undefined') {
+              m = this._events.maxListeners;
+            }
+
+            if (m > 0 && tree._listeners.length > m) {
+
+              tree._listeners.warned = true;
+              console.error('(node) warning: possible EventEmitter memory ' +
+                            'leak detected. %d listeners added. ' +
+                            'Use emitter.setMaxListeners() to increase limit.',
+                            tree._listeners.length);
+              console.trace();
+            }
+          }
+        }
+        return true;
+      }
+      name = type.shift();
+    }
+    return true;
+  }
+
+  // By default EventEmitters will print a warning if more than
+  // 10 listeners are added to it. This is a useful default which
+  // helps finding memory leaks.
+  //
+  // Obviously not all Emitters should be limited to 10. This function allows
+  // that to be increased. Set to zero for unlimited.
+
+  EventEmitter.prototype.delimiter = '.';
+
+  EventEmitter.prototype.setMaxListeners = function(n) {
+    this._events || init.call(this);
+    this._events.maxListeners = n;
+    if (!this._conf) this._conf = {};
+    this._conf.maxListeners = n;
+  };
+
+  EventEmitter.prototype.event = '';
+
+  EventEmitter.prototype.once = function(event, fn) {
+    this.many(event, 1, fn);
+    return this;
+  };
+
+  EventEmitter.prototype.many = function(event, ttl, fn) {
+    var self = this;
+
+    if (typeof fn !== 'function') {
+      throw new Error('many only accepts instances of Function');
+    }
+
+    function listener() {
+      if (--ttl === 0) {
+        self.off(event, listener);
+      }
+      fn.apply(this, arguments);
+    }
+
+    listener._origin = fn;
+
+    this.on(event, listener);
+
+    return self;
+  };
+
+  EventEmitter.prototype.emit = function() {
+
+    this._events || init.call(this);
+
+    var type = arguments[0];
+
+    if (type === 'newListener' && !this.newListener) {
+      if (!this._events.newListener) { return false; }
+    }
+
+    // Loop through the *_all* functions and invoke them.
+    if (this._all) {
+      var l = arguments.length;
+      var args = new Array(l - 1);
+      for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
+      for (i = 0, l = this._all.length; i < l; i++) {
+        this.event = type;
+        this._all[i].apply(this, args);
+      }
+    }
+
+    // If there is no 'error' event listener then throw.
+    if (type === 'error') {
+
+      if (!this._all &&
+        !this._events.error &&
+        !(this.wildcard && this.listenerTree.error)) {
+
+        if (arguments[1] instanceof Error) {
+          throw arguments[1]; // Unhandled 'error' event
+        } else {
+          throw new Error("Uncaught, unspecified 'error' event.");
+        }
+        return false;
+      }
+    }
+
+    var handler;
+
+    if(this.wildcard) {
+      handler = [];
+      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
+      searchListenerTree.call(this, handler, ns, this.listenerTree, 0);
+    }
+    else {
+      handler = this._events[type];
+    }
+
+    if (typeof handler === 'function') {
+      this.event = type;
+      if (arguments.length === 1) {
+        handler.call(this);
+      }
+      else if (arguments.length > 1)
+        switch (arguments.length) {
+          case 2:
+            handler.call(this, arguments[1]);
+            break;
+          case 3:
+            handler.call(this, arguments[1], arguments[2]);
+            break;
+          // slower
+          default:
+            var l = arguments.length;
+            var args = new Array(l - 1);
+            for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
+            handler.apply(this, args);
+        }
+      return true;
+    }
+    else if (handler) {
+      var l = arguments.length;
+      var args = new Array(l - 1);
+      for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
+
+      var listeners = handler.slice();
+      for (var i = 0, l = listeners.length; i < l; i++) {
+        this.event = type;
+        listeners[i].apply(this, args);
+      }
+      return (listeners.length > 0) || !!this._all;
+    }
+    else {
+      return !!this._all;
+    }
+
+  };
+
+  EventEmitter.prototype.on = function(type, listener) {
+
+    if (typeof type === 'function') {
+      this.onAny(type);
+      return this;
+    }
+
+    if (typeof listener !== 'function') {
+      throw new Error('on only accepts instances of Function');
+    }
+    this._events || init.call(this);
+
+    // To avoid recursion in the case that type == "newListeners"! Before
+    // adding it to the listeners, first emit "newListeners".
+    this.emit('newListener', type, listener);
+
+    if(this.wildcard) {
+      growListenerTree.call(this, type, listener);
+      return this;
+    }
+
+    if (!this._events[type]) {
+      // Optimize the case of one listener. Don't need the extra array object.
+      this._events[type] = listener;
+    }
+    else if(typeof this._events[type] === 'function') {
+      // Adding the second element, need to change to array.
+      this._events[type] = [this._events[type], listener];
+    }
+    else if (isArray(this._events[type])) {
+      // If we've already got an array, just append.
+      this._events[type].push(listener);
+
+      // Check for listener leak
+      if (!this._events[type].warned) {
+
+        var m = defaultMaxListeners;
+
+        if (typeof this._events.maxListeners !== 'undefined') {
+          m = this._events.maxListeners;
+        }
+
+        if (m > 0 && this._events[type].length > m) {
+
+          this._events[type].warned = true;
+          console.error('(node) warning: possible EventEmitter memory ' +
+                        'leak detected. %d listeners added. ' +
+                        'Use emitter.setMaxListeners() to increase limit.',
+                        this._events[type].length);
+          console.trace();
+        }
+      }
+    }
+    return this;
+  };
+
+  EventEmitter.prototype.onAny = function(fn) {
+
+    if (typeof fn !== 'function') {
+      throw new Error('onAny only accepts instances of Function');
+    }
+
+    if(!this._all) {
+      this._all = [];
+    }
+
+    // Add the function to the event listener collection.
+    this._all.push(fn);
+    return this;
+  };
+
+  EventEmitter.prototype.addListener = EventEmitter.prototype.on;
+
+  EventEmitter.prototype.off = function(type, listener) {
+    if (typeof listener !== 'function') {
+      throw new Error('removeListener only takes instances of Function');
+    }
+
+    var handlers,leafs=[];
+
+    if(this.wildcard) {
+      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
+      leafs = searchListenerTree.call(this, null, ns, this.listenerTree, 0);
+    }
+    else {
+      // does not use listeners(), so no side effect of creating _events[type]
+      if (!this._events[type]) return this;
+      handlers = this._events[type];
+      leafs.push({_listeners:handlers});
+    }
+
+    for (var iLeaf=0; iLeaf<leafs.length; iLeaf++) {
+      var leaf = leafs[iLeaf];
+      handlers = leaf._listeners;
+      if (isArray(handlers)) {
+
+        var position = -1;
+
+        for (var i = 0, length = handlers.length; i < length; i++) {
+          if (handlers[i] === listener ||
+            (handlers[i].listener && handlers[i].listener === listener) ||
+            (handlers[i]._origin && handlers[i]._origin === listener)) {
+            position = i;
+            break;
+          }
+        }
+
+        if (position < 0) {
+          continue;
+        }
+
+        if(this.wildcard) {
+          leaf._listeners.splice(position, 1);
+        }
+        else {
+          this._events[type].splice(position, 1);
+        }
+
+        if (handlers.length === 0) {
+          if(this.wildcard) {
+            delete leaf._listeners;
+          }
+          else {
+            delete this._events[type];
+          }
+        }
+        return this;
+      }
+      else if (handlers === listener ||
+        (handlers.listener && handlers.listener === listener) ||
+        (handlers._origin && handlers._origin === listener)) {
+        if(this.wildcard) {
+          delete leaf._listeners;
+        }
+        else {
+          delete this._events[type];
+        }
+      }
+    }
+
+    return this;
+  };
+
+  EventEmitter.prototype.offAny = function(fn) {
+    var i = 0, l = 0, fns;
+    if (fn && this._all && this._all.length > 0) {
+      fns = this._all;
+      for(i = 0, l = fns.length; i < l; i++) {
+        if(fn === fns[i]) {
+          fns.splice(i, 1);
+          return this;
+        }
+      }
+    } else {
+      this._all = [];
+    }
+    return this;
+  };
+
+  EventEmitter.prototype.removeListener = EventEmitter.prototype.off;
+
+  EventEmitter.prototype.removeAllListeners = function(type) {
+    if (arguments.length === 0) {
+      !this._events || init.call(this);
+      return this;
+    }
+
+    if(this.wildcard) {
+      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
+      var leafs = searchListenerTree.call(this, null, ns, this.listenerTree, 0);
+
+      for (var iLeaf=0; iLeaf<leafs.length; iLeaf++) {
+        var leaf = leafs[iLeaf];
+        leaf._listeners = null;
+      }
+    }
+    else {
+      if (!this._events[type]) return this;
+      this._events[type] = null;
+    }
+    return this;
+  };
+
+  EventEmitter.prototype.listeners = function(type) {
+    if(this.wildcard) {
+      var handlers = [];
+      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
+      searchListenerTree.call(this, handlers, ns, this.listenerTree, 0);
+      return handlers;
+    }
+
+    this._events || init.call(this);
+
+    if (!this._events[type]) this._events[type] = [];
+    if (!isArray(this._events[type])) {
+      this._events[type] = [this._events[type]];
+    }
+    return this._events[type];
+  };
+
+  EventEmitter.prototype.listenersAny = function() {
+
+    if(this._all) {
+      return this._all;
+    }
+    else {
+      return [];
+    }
+
+  };
+
+  if (typeof define === 'function' && define.amd) {
+     // AMD. Register as an anonymous module.
+    define(function() {
+      return EventEmitter;
+    });
+  } else if (typeof exports === 'object') {
+    // CommonJS
+    exports.EventEmitter2 = EventEmitter;
+  }
+  else {
+    // Browser global.
+    window.EventEmitter2 = EventEmitter;
+  }
+}();
+
+},{}]},{},[1])
