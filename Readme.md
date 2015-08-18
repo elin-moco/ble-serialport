@@ -32,9 +32,14 @@ Include Johnny Five bundle script in your html file:
 ```html
   <script type="text/javascript" src="j5-bundle.js"></script>
 ```
+To use with [node.js], you'll need these two require statements:
+```javascript
+var BleSerialPort = require('ble-serialport').SerialPort;
+var five = require('johnny-five');
+```
 
 Then use it directly in your script:
-```js
+```javascript
 var bsp = new BleSerialPort({address: 'd0:6a:cf:58:ee:bd'}); //put your device name or address here
 bsp.connect().then(function() {
   var board = new five.Board({port: bsp, repl: false});
@@ -55,9 +60,14 @@ Include the firmata bundle script in your html file:
 ```html
   <script type="text/javascript" src="firmata-bundle.js"></script>
 ```
+To use with [node.js], you'll need these two require statements:
+```javascript
+var BleSerialPort = require('ble-serialport').SerialPort;
+var firmata = require('firmata');
+```
 
 Then use it directly in your script:
-```js
+```javascript
 var bsp = new BleSerialPort({address: 'd0:6a:cf:58:ee:bd'}); //put your device name or address here
 bsp.connect().then(function() {
   var board = new firmata.Board(sp);
@@ -71,7 +81,7 @@ bsp.connect().then(function() {
 And you should see the LED on once you have the webapp(page) opened.
 
 
-# Runing examples
+# Runing Examples
 
 For the fxos-j5 example,
 run following commands to copy bundle script to example/fxos-j5 directory:
