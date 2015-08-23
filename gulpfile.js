@@ -26,6 +26,7 @@ var lintSources = [
   '**/*.js',
   '!' + options.param.build + '/**',
   '!' + options.param.dist + '/**',
+  '!example/fxos-j5/*-bundle.js',
   '!node_modules/**'
 ];
 
@@ -34,6 +35,7 @@ gulp.task('jsonlint', function() {
     '**/*.json',
     '!' + options.param.build + '/**',
     '!' + options.param.dist + '/**',
+    '!example/fxos-j5/*-bundle.js',
     '!node_modules/**'])
     .pipe(jsonlint())
     .pipe(jsonlint.reporter());
