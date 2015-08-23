@@ -83,12 +83,14 @@ And you should see the LED on once you have the webapp(page) opened.
 
 # Runing Examples
 
-For the fxos-j5 example,
+For the [fxos-j5] and [cordova-j5] example,
 run following commands to copy bundle script to example/fxos-j5 directory:
 ```
 gulp dist
 ```
-Modify example/fxos-j5/fxos-j5.js for your device address.  
+
+For the [fxos-j5] example,
+modify example/fxos-j5/fxos-j5.js for your device address.  
 Then install app via WebIDE.
 
 For the node-j5 and node-firmata examples, just update the address and run with:
@@ -99,6 +101,9 @@ or
 ```
 node node-j.js
 ```
+
+For the [cordova-j5] example,
+See [cordova-j5] readme file for instructions for initialization and deployment.
 
 # Support
 
@@ -121,3 +126,5 @@ See [blue-yeast] if you are interested in enabling this for other platforms.
 [browserify]: http://browserify.org/ 
 [node.js]: https://nodejs.org/
 [git]: https://git-scm.com/
+[fxos-j5]: https://github.com/elin-moco/ble-serialport/tree/master/example/fxos-j5
+[cordova-j5]: https://github.com/elin-moco/ble-serialport/tree/master/example/cordova-j5

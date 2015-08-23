@@ -7,18 +7,19 @@
   exports.firmata = require('firmata');
 }(window));
 
-},{"./index":2,"firmata":4}],2:[function(require,module,exports){
+},{"./index":2,"firmata":12}],2:[function(require,module,exports){
 (function (process){
 /* global process, require, module */
 'use strict';
 
+require('./polyfills');
 var util = require('util');
 var stream = require('stream');
 if (process) {
   if (process.browser) {
-    require('../blue-yeast');
+    require('blue-yeast');
   } else {
-    var Bluetooth = require('../blue-yeast').Bluetooth;
+    var Bluetooth = require('blue-yeast').Bluetooth;
   }
 }
 
@@ -143,7 +144,1217 @@ module.exports = {
 };
 
 }).call(this,require("IrXUsu"))
-},{"../blue-yeast":129,"IrXUsu":113,"stream":119,"util":128}],3:[function(require,module,exports){
+},{"./polyfills":137,"IrXUsu":121,"blue-yeast":3,"stream":127,"util":136}],3:[function(require,module,exports){
+(function (process){
+/* global process,require,exports */
+'use strict';
+
+if (process) {
+  if (process.browser) {
+    if (window) {
+      if (window.cordova) {
+        if (window.cordova.platformId == 'firefoxos') {
+          require('./fxos/blue_yeast');
+        } else {
+          require('./cordova/blue_yeast');
+        }
+      } else {
+        //TODO: check for different browsers, currently only support fxos
+        require('./fxos/blue_yeast');
+      }
+    } else {
+      throw 'This implementation is for browser but no window object found.'
+    }
+  } else {
+    exports.Bluetooth = require('./node/blue_yeast').Bluetooth;
+  }
+}
+
+}).call(this,require("IrXUsu"))
+},{"./cordova/blue_yeast":4,"./fxos/blue_yeast":6,"./node/blue_yeast":8,"IrXUsu":121}],4:[function(require,module,exports){
+(function (process){
+/* global process,require,BluetoothDevice,ble */
+'use strict';
+if (process) {
+  require('./bluetooth_device');
+}
+
+(function(exports) {
+  //var BLE_SERVICE_UUID = '713d0000-503e-4c75-ba94-3148f18d941e';
+  var BLE_RX_UUID = '713d0003-503e-4c75-ba94-3148f18d941e';
+  var BLE_TX_UUID = '713d0002-503e-4c75-ba94-3148f18d941e';
+  // The timeout to connect next device. It's used for workaround.
+  var CONNECTING_TIMEOUT = 1000;
+
+  function BlueYeast() {
+    this._devices = [];
+  }
+
+  BlueYeast.prototype.CCCD_UUID = '00002902-0000-1000-8000-00805f9b34fb';
+  BlueYeast.prototype._devices = null;
+  BlueYeast.prototype._isScanning = false;
+
+  // TODO: Connect multiple devices at one time.
+  BlueYeast.prototype.connect = function(name, address) {
+    var device = new BluetoothDevice(name, address);
+    // TODO: Pop the device from array once it is disconnected.
+    this._devices.push(device);
+    this._startScan();
+    return device;
+  };
+
+  BlueYeast.prototype._startScan = function() {
+    if (this._isScanning) {
+      return;
+    }
+    this._isScanning = true;
+    var self = this;
+    ble.startScan([], function(device) {
+      self._handleDevicefound(device);
+    }, function(e) {
+      self._isScanning = false;
+      throw e;
+    });
+  };
+
+  // Currently, we cannot stop scan, or the devices don't work correctly.
+  BlueYeast.prototype._stopScan = function() {
+    if (!this._isScanning) {
+      return;
+    }
+    var self = this;
+    ble.stopScan(function() {
+      self._isScanning = false;
+    }, function(e) {
+      throw e;
+    });
+  };
+
+  BlueYeast.prototype._handleDevicefound = function(client) {
+    var deviceAddr = client.id.toLowerCase();
+    var devices = this._devices.filter(function(item) {
+      return item.address === deviceAddr || item.name === client.name;
+    });
+    if (devices.length > 0) {
+      this._stopScan();
+      var self = this;
+      // XXX: Workaround to connect multiple devices correctly.
+      setTimeout(function() {
+        ble.connect(client.id, function(client) {
+          self._discoverServices(devices[0], client);
+        }, function(e) {
+          throw e;
+        });
+      }, CONNECTING_TIMEOUT * this._devices.length);
+    }
+  };
+
+  BlueYeast.prototype._discoverServices = function(device, client) {
+    var writeCharacteristics =
+      client.characteristics.filter(function(characteristic) {
+        return characteristic.characteristic === BLE_RX_UUID;
+      });
+    var notifyCharacteristics =
+      client.characteristics.filter(function(characteristic) {
+        return characteristic.characteristic === BLE_TX_UUID;
+      });
+    device.address = client.id;
+    if (writeCharacteristics.length > 0) {
+      device.writeCharacteristic = writeCharacteristics[0];
+    }
+    if (notifyCharacteristics.length > 0) {
+      device.notifyCharacteristic = notifyCharacteristics[0];
+    }
+    device.emit('connect', device);
+  };
+
+  exports.Bluetooth = new BlueYeast();
+  // For testing.
+  exports.BlueYeast = BlueYeast;
+}(window));
+
+}).call(this,require("IrXUsu"))
+},{"./bluetooth_device":5,"IrXUsu":121}],5:[function(require,module,exports){
+(function (process){
+/* global process,require,ble */
+'use strict';
+if (process) {
+  var EventEmitter2 = require('eventemitter2').EventEmitter2;
+}
+
+(function(exports) {
+  function BluetoothDevice(name, address) {
+    this.name = name;
+    this.address = address;
+  }
+
+  BluetoothDevice.prototype = Object.create(EventEmitter2.prototype);
+
+  BluetoothDevice.prototype.address = null;
+  BluetoothDevice.prototype.writeCharacteristic = null;
+  BluetoothDevice.prototype.notifyCharacteristic = null;
+  BluetoothDevice.prototype._isNotificationsStarted = false;
+
+  /**
+   * Send data to BLE device in bytes.
+   * @param {ArrayBuffer|Uint8Array} data Data to be sent,
+   * accept Uint8Array, ArrayBuffer or String in hex format.
+   * @throws "Data can't be empty" if data is null|undfined
+   * @throws "Unsupported data type" if data is not String|Uint8Array
+   */
+  BluetoothDevice.prototype.send = function(data) {
+    if (data instanceof Uint8Array) {
+      this._writeData(data.buffer);
+    } else if (data instanceof ArrayBuffer) {
+      this._writeData(data, false);
+    } else if (data instanceof String) {
+      this._writeData(this._parseHexString(data));
+    } else if (data) {
+      throw 'Unsupported data type ' + data.constructor.name +
+      ', must be Uint8Array or Hex String';
+    } else {
+      throw 'Data cannot be empty';
+    }
+  };
+
+  BluetoothDevice.prototype._writeData = function(data) {
+    var self = this;
+    ble.writeWithoutResponse(this.address, this.writeCharacteristic.service,
+      self.writeCharacteristic.characteristic, data, function() {
+      },
+      function(e) {
+        throw e;
+      });
+  };
+
+  BluetoothDevice.prototype.startNotifications = function() {
+    if (this._isNotificationsStarted) {
+      return;
+    } else {
+      this._isNotificationsStarted = true;
+    }
+
+    var self = this;
+    ble.startNotification(this.address, this.notifyCharacteristic.service,
+      this.notifyCharacteristic.characteristic, function(value) {
+        self.emit('data', value);
+      }, function(e) {
+        throw e;
+      });
+  };
+
+  BluetoothDevice.prototype.stopNotifications = function() {
+    var self = this;
+    ble.stopNotification(this.address, this.notifyCharacteristic.service,
+      this.notifyCharacteristic.characteristic, function() {
+        self._isNotificationsStarted = false;
+      }, function(e) {
+        throw e;
+      });
+  };
+
+  BluetoothDevice.prototype._parseHexString = function(str) {
+    var arrayBuffer = new ArrayBuffer(Math.ceil(str.length / 2));
+    var uint8Array = new Uint8Array(arrayBuffer);
+    for (var i = 0, j = 0; i < str.length; i += 2, j++) {
+      uint8Array[j] = parseInt(str.substr(i, 2), 16);
+    }
+    return arrayBuffer;
+  };
+
+  exports.BluetoothDevice = BluetoothDevice;
+}(window));
+
+}).call(this,require("IrXUsu"))
+},{"IrXUsu":121,"eventemitter2":10}],6:[function(require,module,exports){
+(function (process){
+/* global process,require,BluetoothDevice */
+'use strict';
+if (process) {
+  require('./bluetooth_device');
+}
+
+(function(exports) {
+  var BLE_SERVICE_UUID = '713d0000-503e-4c75-ba94-3148f18d941e';
+  var BLE_RX_UUID = '713d0003-503e-4c75-ba94-3148f18d941e';
+  var BLE_TX_UUID = '713d0002-503e-4c75-ba94-3148f18d941e';
+  // The timeout to connect next device. It's used for workaround.
+  var CONNECTING_TIMEOUT = 1000;
+  var bluetooth = navigator.mozBluetooth;
+
+  function BlueYeast() {
+    this._devices = [];
+  }
+
+  BlueYeast.prototype.CCCD_UUID = '00002902-0000-1000-8000-00805f9b34fb';
+  BlueYeast.prototype._devices = null;
+  BlueYeast.prototype._scan = null;
+  BlueYeast.prototype._isScanning = false;
+
+  // TODO: Connect multiple devices at one time.
+  BlueYeast.prototype.connect = function(name, address) {
+    var device = new BluetoothDevice(name, address);
+    // TODO: Pop the device from array once it is disconnected.
+    this._devices.push(device);
+    this._startScan();
+    return device;
+  };
+
+  BlueYeast.prototype._startScan = function() {
+    if (this._isScanning) {
+      return;
+    }
+    if (bluetooth.defaultAdapter) {
+      // For stability, we use startDiscovery to instead of startLeScan.
+      var self = this;
+      return bluetooth.defaultAdapter.startLeScan([]).then(function(scan) {
+        self._isScanning = true;
+        self._scan = scan;
+        scan.addEventListener('devicefound', function(device) {
+          self._handleDevicefound(device);
+        });
+      }).catch(function(e) {
+        self._isScanning = false;
+        throw e;
+      });
+    } else {
+      bluetooth.addEventListener('attributechanged',
+        this._handleAttributechanged.bind(this));
+    }
+  };
+
+  // Currently, we cannot stop scan, or the devices don't work correctly.
+  BlueYeast.prototype._stopScan = function() {
+    if (!this._isScanning) {
+      return;
+    }
+    var self = this;
+    bluetooth.defaultAdapter.stopLeScan(this._scan).then(function() {
+      self._isScanning = false;
+    });
+  };
+
+  BlueYeast.prototype._handleAttributechanged = function(evt) {
+    for (var key in evt.attrs) {
+      switch (evt.attrs[key]) {
+        case 'defaultAdapter':
+          bluetooth.removeEventListener('attributechanged',
+            this._handleAttributechanged);
+          this._startScan();
+          break;
+      }
+    }
+  };
+
+  BlueYeast.prototype._handleDevicefound = function(evt) {
+    var device = evt.device;
+    var gatt = device.gatt;
+    device = this._devices.find(function(item) {
+      return (item.address === device.address ||
+        item.name === device.name) &&
+        !device.paired;
+    });
+    if (device) {
+      this._stopScan();
+      var self = this;
+      // XXX: Workaround to connect multiple devices correctly.
+      setTimeout(function() {
+        device.gatt = gatt;
+        gatt.connect().then(function() {
+          self._discoverServices(device, gatt);
+        });
+      }, CONNECTING_TIMEOUT * this._devices.length);
+    }
+  };
+
+  BlueYeast.prototype._discoverServices = function(device, gatt) {
+    return gatt.discoverServices().then(function() {
+      var service = gatt.services.find(function(service) {
+        return service.uuid === BLE_SERVICE_UUID;
+      });
+      var writeCharacteristic =
+        service.characteristics.find(function(characteristic) {
+          return characteristic.uuid === BLE_RX_UUID;
+        });
+      var notifyCharacteristic =
+        service.characteristics.find(function(characteristic) {
+          return characteristic.uuid === BLE_TX_UUID;
+        });
+      device.writeCharacteristic = writeCharacteristic;
+      device.notifyCharacteristic = notifyCharacteristic;
+      device.emit('connect', device);
+    });
+  };
+
+  exports.Bluetooth = new BlueYeast();
+  // For testing.
+  exports.BlueYeast = BlueYeast;
+}(window));
+
+}).call(this,require("IrXUsu"))
+},{"./bluetooth_device":7,"IrXUsu":121}],7:[function(require,module,exports){
+(function (process){
+/* global process,require,Bluetooth */
+'use strict';
+if (process) {
+  var EventEmitter2 = require('eventemitter2').EventEmitter2;
+}
+
+(function(exports) {
+  function BluetoothDevice(name, address) {
+    this.name = name;
+    this.address = address;
+  }
+
+  BluetoothDevice.prototype = Object.create(EventEmitter2.prototype);
+
+  BluetoothDevice.prototype.gatt = null;
+  BluetoothDevice.prototype.writeCharacteristic = null;
+  BluetoothDevice.prototype.notifyCharacteristic = null;
+  BluetoothDevice.prototype._isNotificationsStarted = false;
+
+  /**
+   * Send data to BLE device in bytes.
+   * @param {ArrayBuffer|Uint8Array} data Data to be sent,
+   * accept Uint8Array, ArrayBuffer or String in hex format.
+   * @throws "Data can't be empty" if data is null|undfined
+   * @throws "Unsupported data type" if data is not String|Uint8Array
+   */
+  BluetoothDevice.prototype.send = function(data) {
+    if (data instanceof Uint8Array) {
+      this.writeCharacteristic.writeValue(data.buffer);
+    } else if (data instanceof ArrayBuffer) {
+      this.writeCharacteristic.write(data, false);
+    } else if (data instanceof String) {
+      this.writeCharacteristic.writeValue(this._parseHexString(data));
+    } else if (data) {
+      throw 'Unsupported data type ' + data.constructor.name +
+        ', must be Uint8Array or Hex String';
+    } else {
+      throw 'Data cannot be empty';
+    }
+  };
+
+  BluetoothDevice.prototype.startNotifications = function() {
+    if (this._isNotificationsStarted) {
+      return;
+    } else {
+      this._isNotificationsStarted = true;
+    }
+    var characteristic = this.notifyCharacteristic;
+    var self = this;
+    this.gatt.addEventListener('characteristicchanged', function(evt) {
+      self.emit('data', evt.characteristic.value);
+    });
+    characteristic.startNotifications();
+    var descriptor = characteristic.descriptors.find(function(descriptor) {
+      return descriptor.uuid === Bluetooth.CCCD_UUID;
+    });
+    if (descriptor) {
+      var arrayBuffer = new ArrayBuffer(2);
+      var uint8Array = new Uint8Array(arrayBuffer);
+      uint8Array[0] = 0x01;
+      uint8Array[1] = 0x00;
+      descriptor.writeValue(arrayBuffer);
+    }
+  };
+
+  BluetoothDevice.prototype.stopNotifications = function() {
+    this._isNotificationsStarted = false;
+    this.notifyCharacteristic.stopNotifications();
+  };
+
+  BluetoothDevice.prototype._parseHexString = function(str) {
+    var arrayBuffer = new ArrayBuffer(Math.ceil(str.length / 2));
+    var uint8Array = new Uint8Array(arrayBuffer);
+    for (var i = 0, j = 0; i < str.length; i += 2, j++) {
+      uint8Array[j] = parseInt(str.substr(i, 2), 16);
+    }
+    return arrayBuffer;
+  };
+
+  exports.BluetoothDevice = BluetoothDevice;
+}(window));
+
+}).call(this,require("IrXUsu"))
+},{"IrXUsu":121,"eventemitter2":10}],8:[function(require,module,exports){
+/* global require,exports */
+'use strict';
+
+var noble = require('noble');
+var BluetoothDevice = require('./bluetooth_device').BluetoothDevice;
+
+(function(exports) {
+  var BLE_SERVICE_UUID = '713d0000503e4c75ba943148f18d941e';
+  var BLE_RX_UUID = '713d0003503e4c75ba943148f18d941e';
+  var BLE_TX_UUID = '713d0002503e4c75ba943148f18d941e';
+  //var BLE_SERVICE_UUID = '713d0000-503e-4c75-ba94-3148f18d941e';
+  //var BLE_RX_UUID = '713d0003-503e-4c75-ba94-3148f18d941e';
+  //var BLE_TX_UUID = '713d0002-503e-4c75-ba94-3148f18d941e';
+  // The timeout to connect next device. It's used for workaround.
+  var CONNECTING_TIMEOUT = 1000;
+  //var bluetooth = navigator.mozBluetooth;
+  BlueYeast.prototype.CCCD_UUID = '00002902-0000-1000-8000-00805f9b34fb';
+  BlueYeast.prototype._devices = null;
+  BlueYeast.prototype._scan = null;
+  BlueYeast.prototype._isScanning = false;
+
+  function BlueYeast() {
+    this._devices = [];
+  }
+
+  // TODO: Connect multiple devices at one time.
+  BlueYeast.prototype.connect = function(name, address) {
+    var device = new BluetoothDevice(name, address);
+    // TODO: Pop the device from array once it is disconnected.
+    this._devices.push(device);
+    this._startScan();
+    return device;
+  };
+
+  BlueYeast.prototype._startScan = function() {
+    if (this._isScanning) {
+      return;
+    }
+
+    this._isScanning = true;
+    if (noble.state == 'poweredOn') {
+      noble.on('discover', this._handleDevicefound.bind(this));
+      noble.startScanning();
+    } else {
+      noble.on('stateChange', this._handleStatechanged.bind(this));
+    }
+
+  };
+
+  // Currently, we cannot stop scan, or the devices don't work correctly.
+  BlueYeast.prototype._stopScan = function() {
+    if (!this._isScanning) {
+      return;
+    }
+    this._isScanning = false;
+    noble.stopScanning();
+    //noble.removeEventListener('discover', this._handleDevicefound);
+  };
+
+  BlueYeast.prototype._handleStatechanged = function() {
+    if (noble.state == 'poweredOn') {
+      noble.startScanning();
+      noble.on('discover', this._handleDevicefound.bind(this));
+      //noble.removeEventListener('stateChange', this._handleStatechanged);
+    }
+  };
+
+  BlueYeast.prototype._handleDevicefound = function(peripheral) {
+    var devices = this._devices.filter(function(item) {
+      return (item.address === peripheral.address ||
+        item.name === peripheral.advertisement.localName) &&
+        peripheral.state !== 'connected';
+    });
+    if (devices && devices.length > 0) {
+      this._stopScan();
+      var self = this;
+      // XXX: Workaround to connect multiple devices correctly.
+      setTimeout(function() {
+        devices[0].client = peripheral;
+        peripheral.connect(function() {
+          self._discoverServices(devices[0], peripheral);
+        });
+      }, CONNECTING_TIMEOUT * this._devices.length);
+    }
+  };
+
+  BlueYeast.prototype._discoverServices = function(device, client) {
+    try {
+      client.discoverServices(
+        [BLE_SERVICE_UUID],
+        function(error, services) {
+          services[0].discoverCharacteristics([BLE_RX_UUID, BLE_TX_UUID],
+            function(error, characteristics) {
+              device.writeCharacteristic = characteristics[0];
+              device.notifyCharacteristic = characteristics[1];
+              device.emit('connect', device);
+            });
+        });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  exports.Bluetooth = new BlueYeast();
+  // For testing.
+  exports.BlueYeast = BlueYeast;
+}(exports));
+
+},{"./bluetooth_device":9,"noble":111}],9:[function(require,module,exports){
+(function (process,Buffer){
+/* global process,require,Buffer,exports */
+'use strict';
+if (process) {
+  var EventEmitter2 = require('eventemitter2').EventEmitter2;
+}
+
+(function(exports) {
+  function BluetoothDevice(name, address) {
+    this.name = name;
+    this.address = address;
+  }
+
+  BluetoothDevice.prototype = Object.create(EventEmitter2.prototype);
+
+  BluetoothDevice.prototype.client = null;
+  BluetoothDevice.prototype.writeCharacteristic = null;
+  BluetoothDevice.prototype.notifyCharacteristic = null;
+  BluetoothDevice.prototype._isNotificationsStarted = false;
+
+  /**
+   * Send data to BLE device in bytes.
+   * @param {Buffer|Uint8Array} data Data to be sent,
+   * accept Uint8Array or String in hex format.
+   * @throws "Data can't be empty" if data is null|undfined
+   * @throws "Unsupported data type" if data is not String|Uint8Array
+   */
+  BluetoothDevice.prototype.send = function(data) {
+    if (data instanceof Uint8Array) {
+      this.writeCharacteristic.write(this._toBuffer(data.buffer), false);
+    } else if (data instanceof Buffer) {
+      this.writeCharacteristic.write(data, false);
+    } else if (data instanceof String) {
+      this.writeCharacteristic.write(this._parseHexString(data), false);
+    } else if (data) {
+      throw 'Unsupported data type ' + data.constructor.name +
+      ', must be Uint8Array or Hex String';
+    } else {
+      throw 'Data cannot be empty';
+    }
+  };
+
+  BluetoothDevice.prototype.startNotifications = function() {
+    if (this._isNotificationsStarted) {
+      return;
+    }
+    this._isNotificationsStarted = true;
+    this.notifyCharacteristic.notify(true);
+    var self = this;
+    this.notifyCharacteristic.on('data', function(data, isNotification) {
+      if (isNotification) {
+        self.emit('data', new Uint8Array(self._toArrayBuffer(data)));
+      }
+    });
+  };
+
+  BluetoothDevice.prototype.stopNotifications = function() {
+    this._isNotificationsStarted = false;
+    this.notifyCharacteristic.notify(false);
+  };
+
+  BluetoothDevice.prototype._parseHexString = function(str) {
+    var arrayBuffer = new ArrayBuffer(Math.ceil(str.length / 2));
+    var uint8Array = new Uint8Array(arrayBuffer);
+    for (var i = 0, j = 0; i < str.length; i += 2, j++) {
+      uint8Array[j] = parseInt(str.substr(i, 2), 16);
+    }
+    return this._toBuffer(arrayBuffer);
+  };
+
+  BluetoothDevice.prototype._toBuffer = function(ab) {
+    var buffer = new Buffer(ab.byteLength);
+    var view = new Uint8Array(ab);
+    for (var i = 0; i < buffer.length; ++i) {
+      buffer[i] = view[i];
+    }
+    return buffer;
+  };
+
+  BluetoothDevice.prototype._toArrayBuffer = function(buffer) {
+    var ab = new ArrayBuffer(buffer.length);
+    var view = new Uint8Array(ab);
+    for (var i = 0; i < buffer.length; ++i) {
+      view[i] = buffer[i];
+    }
+    return ab;
+  };
+
+  exports.BluetoothDevice = BluetoothDevice;
+}(exports));
+
+}).call(this,require("IrXUsu"),require("buffer").Buffer)
+},{"IrXUsu":121,"buffer":114,"eventemitter2":10}],10:[function(require,module,exports){
+/*!
+ * EventEmitter2
+ * https://github.com/hij1nx/EventEmitter2
+ *
+ * Copyright (c) 2013 hij1nx
+ * Licensed under the MIT license.
+ */
+;!function(undefined) {
+
+  var isArray = Array.isArray ? Array.isArray : function _isArray(obj) {
+    return Object.prototype.toString.call(obj) === "[object Array]";
+  };
+  var defaultMaxListeners = 10;
+
+  function init() {
+    this._events = {};
+    if (this._conf) {
+      configure.call(this, this._conf);
+    }
+  }
+
+  function configure(conf) {
+    if (conf) {
+
+      this._conf = conf;
+
+      conf.delimiter && (this.delimiter = conf.delimiter);
+      conf.maxListeners && (this._events.maxListeners = conf.maxListeners);
+      conf.wildcard && (this.wildcard = conf.wildcard);
+      conf.newListener && (this.newListener = conf.newListener);
+
+      if (this.wildcard) {
+        this.listenerTree = {};
+      }
+    }
+  }
+
+  function EventEmitter(conf) {
+    this._events = {};
+    this.newListener = false;
+    configure.call(this, conf);
+  }
+
+  //
+  // Attention, function return type now is array, always !
+  // It has zero elements if no any matches found and one or more
+  // elements (leafs) if there are matches
+  //
+  function searchListenerTree(handlers, type, tree, i) {
+    if (!tree) {
+      return [];
+    }
+    var listeners=[], leaf, len, branch, xTree, xxTree, isolatedBranch, endReached,
+        typeLength = type.length, currentType = type[i], nextType = type[i+1];
+    if (i === typeLength && tree._listeners) {
+      //
+      // If at the end of the event(s) list and the tree has listeners
+      // invoke those listeners.
+      //
+      if (typeof tree._listeners === 'function') {
+        handlers && handlers.push(tree._listeners);
+        return [tree];
+      } else {
+        for (leaf = 0, len = tree._listeners.length; leaf < len; leaf++) {
+          handlers && handlers.push(tree._listeners[leaf]);
+        }
+        return [tree];
+      }
+    }
+
+    if ((currentType === '*' || currentType === '**') || tree[currentType]) {
+      //
+      // If the event emitted is '*' at this part
+      // or there is a concrete match at this patch
+      //
+      if (currentType === '*') {
+        for (branch in tree) {
+          if (branch !== '_listeners' && tree.hasOwnProperty(branch)) {
+            listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i+1));
+          }
+        }
+        return listeners;
+      } else if(currentType === '**') {
+        endReached = (i+1 === typeLength || (i+2 === typeLength && nextType === '*'));
+        if(endReached && tree._listeners) {
+          // The next element has a _listeners, add it to the handlers.
+          listeners = listeners.concat(searchListenerTree(handlers, type, tree, typeLength));
+        }
+
+        for (branch in tree) {
+          if (branch !== '_listeners' && tree.hasOwnProperty(branch)) {
+            if(branch === '*' || branch === '**') {
+              if(tree[branch]._listeners && !endReached) {
+                listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], typeLength));
+              }
+              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i));
+            } else if(branch === nextType) {
+              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i+2));
+            } else {
+              // No match on this one, shift into the tree but not in the type array.
+              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i));
+            }
+          }
+        }
+        return listeners;
+      }
+
+      listeners = listeners.concat(searchListenerTree(handlers, type, tree[currentType], i+1));
+    }
+
+    xTree = tree['*'];
+    if (xTree) {
+      //
+      // If the listener tree will allow any match for this part,
+      // then recursively explore all branches of the tree
+      //
+      searchListenerTree(handlers, type, xTree, i+1);
+    }
+
+    xxTree = tree['**'];
+    if(xxTree) {
+      if(i < typeLength) {
+        if(xxTree._listeners) {
+          // If we have a listener on a '**', it will catch all, so add its handler.
+          searchListenerTree(handlers, type, xxTree, typeLength);
+        }
+
+        // Build arrays of matching next branches and others.
+        for(branch in xxTree) {
+          if(branch !== '_listeners' && xxTree.hasOwnProperty(branch)) {
+            if(branch === nextType) {
+              // We know the next element will match, so jump twice.
+              searchListenerTree(handlers, type, xxTree[branch], i+2);
+            } else if(branch === currentType) {
+              // Current node matches, move into the tree.
+              searchListenerTree(handlers, type, xxTree[branch], i+1);
+            } else {
+              isolatedBranch = {};
+              isolatedBranch[branch] = xxTree[branch];
+              searchListenerTree(handlers, type, { '**': isolatedBranch }, i+1);
+            }
+          }
+        }
+      } else if(xxTree._listeners) {
+        // We have reached the end and still on a '**'
+        searchListenerTree(handlers, type, xxTree, typeLength);
+      } else if(xxTree['*'] && xxTree['*']._listeners) {
+        searchListenerTree(handlers, type, xxTree['*'], typeLength);
+      }
+    }
+
+    return listeners;
+  }
+
+  function growListenerTree(type, listener) {
+
+    type = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
+
+    //
+    // Looks for two consecutive '**', if so, don't add the event at all.
+    //
+    for(var i = 0, len = type.length; i+1 < len; i++) {
+      if(type[i] === '**' && type[i+1] === '**') {
+        return;
+      }
+    }
+
+    var tree = this.listenerTree;
+    var name = type.shift();
+
+    while (name) {
+
+      if (!tree[name]) {
+        tree[name] = {};
+      }
+
+      tree = tree[name];
+
+      if (type.length === 0) {
+
+        if (!tree._listeners) {
+          tree._listeners = listener;
+        }
+        else if(typeof tree._listeners === 'function') {
+          tree._listeners = [tree._listeners, listener];
+        }
+        else if (isArray(tree._listeners)) {
+
+          tree._listeners.push(listener);
+
+          if (!tree._listeners.warned) {
+
+            var m = defaultMaxListeners;
+
+            if (typeof this._events.maxListeners !== 'undefined') {
+              m = this._events.maxListeners;
+            }
+
+            if (m > 0 && tree._listeners.length > m) {
+
+              tree._listeners.warned = true;
+              console.error('(node) warning: possible EventEmitter memory ' +
+                            'leak detected. %d listeners added. ' +
+                            'Use emitter.setMaxListeners() to increase limit.',
+                            tree._listeners.length);
+              console.trace();
+            }
+          }
+        }
+        return true;
+      }
+      name = type.shift();
+    }
+    return true;
+  }
+
+  // By default EventEmitters will print a warning if more than
+  // 10 listeners are added to it. This is a useful default which
+  // helps finding memory leaks.
+  //
+  // Obviously not all Emitters should be limited to 10. This function allows
+  // that to be increased. Set to zero for unlimited.
+
+  EventEmitter.prototype.delimiter = '.';
+
+  EventEmitter.prototype.setMaxListeners = function(n) {
+    this._events || init.call(this);
+    this._events.maxListeners = n;
+    if (!this._conf) this._conf = {};
+    this._conf.maxListeners = n;
+  };
+
+  EventEmitter.prototype.event = '';
+
+  EventEmitter.prototype.once = function(event, fn) {
+    this.many(event, 1, fn);
+    return this;
+  };
+
+  EventEmitter.prototype.many = function(event, ttl, fn) {
+    var self = this;
+
+    if (typeof fn !== 'function') {
+      throw new Error('many only accepts instances of Function');
+    }
+
+    function listener() {
+      if (--ttl === 0) {
+        self.off(event, listener);
+      }
+      fn.apply(this, arguments);
+    }
+
+    listener._origin = fn;
+
+    this.on(event, listener);
+
+    return self;
+  };
+
+  EventEmitter.prototype.emit = function() {
+
+    this._events || init.call(this);
+
+    var type = arguments[0];
+
+    if (type === 'newListener' && !this.newListener) {
+      if (!this._events.newListener) { return false; }
+    }
+
+    // Loop through the *_all* functions and invoke them.
+    if (this._all) {
+      var l = arguments.length;
+      var args = new Array(l - 1);
+      for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
+      for (i = 0, l = this._all.length; i < l; i++) {
+        this.event = type;
+        this._all[i].apply(this, args);
+      }
+    }
+
+    // If there is no 'error' event listener then throw.
+    if (type === 'error') {
+
+      if (!this._all &&
+        !this._events.error &&
+        !(this.wildcard && this.listenerTree.error)) {
+
+        if (arguments[1] instanceof Error) {
+          throw arguments[1]; // Unhandled 'error' event
+        } else {
+          throw new Error("Uncaught, unspecified 'error' event.");
+        }
+        return false;
+      }
+    }
+
+    var handler;
+
+    if(this.wildcard) {
+      handler = [];
+      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
+      searchListenerTree.call(this, handler, ns, this.listenerTree, 0);
+    }
+    else {
+      handler = this._events[type];
+    }
+
+    if (typeof handler === 'function') {
+      this.event = type;
+      if (arguments.length === 1) {
+        handler.call(this);
+      }
+      else if (arguments.length > 1)
+        switch (arguments.length) {
+          case 2:
+            handler.call(this, arguments[1]);
+            break;
+          case 3:
+            handler.call(this, arguments[1], arguments[2]);
+            break;
+          // slower
+          default:
+            var l = arguments.length;
+            var args = new Array(l - 1);
+            for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
+            handler.apply(this, args);
+        }
+      return true;
+    }
+    else if (handler) {
+      var l = arguments.length;
+      var args = new Array(l - 1);
+      for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
+
+      var listeners = handler.slice();
+      for (var i = 0, l = listeners.length; i < l; i++) {
+        this.event = type;
+        listeners[i].apply(this, args);
+      }
+      return (listeners.length > 0) || !!this._all;
+    }
+    else {
+      return !!this._all;
+    }
+
+  };
+
+  EventEmitter.prototype.on = function(type, listener) {
+
+    if (typeof type === 'function') {
+      this.onAny(type);
+      return this;
+    }
+
+    if (typeof listener !== 'function') {
+      throw new Error('on only accepts instances of Function');
+    }
+    this._events || init.call(this);
+
+    // To avoid recursion in the case that type == "newListeners"! Before
+    // adding it to the listeners, first emit "newListeners".
+    this.emit('newListener', type, listener);
+
+    if(this.wildcard) {
+      growListenerTree.call(this, type, listener);
+      return this;
+    }
+
+    if (!this._events[type]) {
+      // Optimize the case of one listener. Don't need the extra array object.
+      this._events[type] = listener;
+    }
+    else if(typeof this._events[type] === 'function') {
+      // Adding the second element, need to change to array.
+      this._events[type] = [this._events[type], listener];
+    }
+    else if (isArray(this._events[type])) {
+      // If we've already got an array, just append.
+      this._events[type].push(listener);
+
+      // Check for listener leak
+      if (!this._events[type].warned) {
+
+        var m = defaultMaxListeners;
+
+        if (typeof this._events.maxListeners !== 'undefined') {
+          m = this._events.maxListeners;
+        }
+
+        if (m > 0 && this._events[type].length > m) {
+
+          this._events[type].warned = true;
+          console.error('(node) warning: possible EventEmitter memory ' +
+                        'leak detected. %d listeners added. ' +
+                        'Use emitter.setMaxListeners() to increase limit.',
+                        this._events[type].length);
+          console.trace();
+        }
+      }
+    }
+    return this;
+  };
+
+  EventEmitter.prototype.onAny = function(fn) {
+
+    if (typeof fn !== 'function') {
+      throw new Error('onAny only accepts instances of Function');
+    }
+
+    if(!this._all) {
+      this._all = [];
+    }
+
+    // Add the function to the event listener collection.
+    this._all.push(fn);
+    return this;
+  };
+
+  EventEmitter.prototype.addListener = EventEmitter.prototype.on;
+
+  EventEmitter.prototype.off = function(type, listener) {
+    if (typeof listener !== 'function') {
+      throw new Error('removeListener only takes instances of Function');
+    }
+
+    var handlers,leafs=[];
+
+    if(this.wildcard) {
+      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
+      leafs = searchListenerTree.call(this, null, ns, this.listenerTree, 0);
+    }
+    else {
+      // does not use listeners(), so no side effect of creating _events[type]
+      if (!this._events[type]) return this;
+      handlers = this._events[type];
+      leafs.push({_listeners:handlers});
+    }
+
+    for (var iLeaf=0; iLeaf<leafs.length; iLeaf++) {
+      var leaf = leafs[iLeaf];
+      handlers = leaf._listeners;
+      if (isArray(handlers)) {
+
+        var position = -1;
+
+        for (var i = 0, length = handlers.length; i < length; i++) {
+          if (handlers[i] === listener ||
+            (handlers[i].listener && handlers[i].listener === listener) ||
+            (handlers[i]._origin && handlers[i]._origin === listener)) {
+            position = i;
+            break;
+          }
+        }
+
+        if (position < 0) {
+          continue;
+        }
+
+        if(this.wildcard) {
+          leaf._listeners.splice(position, 1);
+        }
+        else {
+          this._events[type].splice(position, 1);
+        }
+
+        if (handlers.length === 0) {
+          if(this.wildcard) {
+            delete leaf._listeners;
+          }
+          else {
+            delete this._events[type];
+          }
+        }
+        return this;
+      }
+      else if (handlers === listener ||
+        (handlers.listener && handlers.listener === listener) ||
+        (handlers._origin && handlers._origin === listener)) {
+        if(this.wildcard) {
+          delete leaf._listeners;
+        }
+        else {
+          delete this._events[type];
+        }
+      }
+    }
+
+    return this;
+  };
+
+  EventEmitter.prototype.offAny = function(fn) {
+    var i = 0, l = 0, fns;
+    if (fn && this._all && this._all.length > 0) {
+      fns = this._all;
+      for(i = 0, l = fns.length; i < l; i++) {
+        if(fn === fns[i]) {
+          fns.splice(i, 1);
+          return this;
+        }
+      }
+    } else {
+      this._all = [];
+    }
+    return this;
+  };
+
+  EventEmitter.prototype.removeListener = EventEmitter.prototype.off;
+
+  EventEmitter.prototype.removeAllListeners = function(type) {
+    if (arguments.length === 0) {
+      !this._events || init.call(this);
+      return this;
+    }
+
+    if(this.wildcard) {
+      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
+      var leafs = searchListenerTree.call(this, null, ns, this.listenerTree, 0);
+
+      for (var iLeaf=0; iLeaf<leafs.length; iLeaf++) {
+        var leaf = leafs[iLeaf];
+        leaf._listeners = null;
+      }
+    }
+    else {
+      if (!this._events[type]) return this;
+      this._events[type] = null;
+    }
+    return this;
+  };
+
+  EventEmitter.prototype.listeners = function(type) {
+    if(this.wildcard) {
+      var handlers = [];
+      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
+      searchListenerTree.call(this, handlers, ns, this.listenerTree, 0);
+      return handlers;
+    }
+
+    this._events || init.call(this);
+
+    if (!this._events[type]) this._events[type] = [];
+    if (!isArray(this._events[type])) {
+      this._events[type] = [this._events[type]];
+    }
+    return this._events[type];
+  };
+
+  EventEmitter.prototype.listenersAny = function() {
+
+    if(this._all) {
+      return this._all;
+    }
+    else {
+      return [];
+    }
+
+  };
+
+  if (typeof define === 'function' && define.amd) {
+     // AMD. Register as an anonymous module.
+    define(function() {
+      return EventEmitter;
+    });
+  } else if (typeof exports === 'object') {
+    // CommonJS
+    exports.EventEmitter2 = EventEmitter;
+  }
+  else {
+    // Browser global.
+    window.EventEmitter2 = EventEmitter;
+  }
+}();
+
+},{}],11:[function(require,module,exports){
 /**
  * "Inspired" by Encoder7Bit.h/Encoder7Bit.cpp in the
  * Firmata source code.
@@ -192,7 +1403,7 @@ module.exports = {
   }
 };
 
-},{}],4:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
 (function (process,Buffer){
 /**
  * Global Environment Dependencies
@@ -1622,7 +2833,7 @@ Board.MIDI_RESPONSE = MIDI_RESPONSE;
 module.exports = Board;
 
 }).call(this,require("IrXUsu"),require("buffer").Buffer)
-},{"./encoder7bit":3,"./onewireutils":5,"IrXUsu":113,"browser-serialport":6,"buffer":106,"es6-map":7,"events":109,"object-assign":62,"serialport":102,"util":128}],5:[function(require,module,exports){
+},{"./encoder7bit":11,"./onewireutils":13,"IrXUsu":121,"browser-serialport":14,"buffer":114,"es6-map":15,"events":117,"object-assign":70,"serialport":110,"util":136}],13:[function(require,module,exports){
 var Encoder7Bit = require("./encoder7bit");
 
 var OneWireUtils = {
@@ -1672,7 +2883,7 @@ var OneWireUtils = {
 
 module.exports = OneWireUtils;
 
-},{"./encoder7bit":3}],6:[function(require,module,exports){
+},{"./encoder7bit":11}],14:[function(require,module,exports){
 (function (process,Buffer){
 'use strict';
 
@@ -2095,12 +3306,12 @@ module.exports = {
 };
 
 }).call(this,require("IrXUsu"),require("buffer").Buffer)
-},{"IrXUsu":113,"buffer":106,"events":109,"util":128}],7:[function(require,module,exports){
+},{"IrXUsu":121,"buffer":114,"events":117,"util":136}],15:[function(require,module,exports){
 'use strict';
 
 module.exports = require('./is-implemented')() ? Map : require('./polyfill');
 
-},{"./is-implemented":8,"./polyfill":61}],8:[function(require,module,exports){
+},{"./is-implemented":16,"./polyfill":69}],16:[function(require,module,exports){
 'use strict';
 
 module.exports = function () {
@@ -2132,7 +3343,7 @@ module.exports = function () {
 	return true;
 };
 
-},{}],9:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 // Exports true if environment provides native `Map` implementation,
 // whatever that is.
 
@@ -2143,13 +3354,13 @@ module.exports = (function () {
 	return (Object.prototype.toString.call(Map.prototype) === '[object Map]');
 }());
 
-},{}],10:[function(require,module,exports){
+},{}],18:[function(require,module,exports){
 'use strict';
 
 module.exports = require('es5-ext/object/primitive-set')('key',
 	'value', 'key+value');
 
-},{"es5-ext/object/primitive-set":35}],11:[function(require,module,exports){
+},{"es5-ext/object/primitive-set":43}],19:[function(require,module,exports){
 'use strict';
 
 var setPrototypeOf    = require('es5-ext/object/set-prototype-of')
@@ -2189,7 +3400,7 @@ MapIterator.prototype = Object.create(Iterator.prototype, {
 Object.defineProperty(MapIterator.prototype, toStringTagSymbol,
 	d('c', 'Map Iterator'));
 
-},{"./iterator-kinds":10,"d":13,"es5-ext/object/set-prototype-of":36,"es6-iterator":48,"es6-symbol":57}],12:[function(require,module,exports){
+},{"./iterator-kinds":18,"d":21,"es5-ext/object/set-prototype-of":44,"es6-iterator":56,"es6-symbol":65}],20:[function(require,module,exports){
 'use strict';
 
 var copy       = require('es5-ext/object/copy')
@@ -2222,7 +3433,7 @@ module.exports = function (props/*, bindTo*/) {
 	});
 };
 
-},{"es5-ext/object/copy":25,"es5-ext/object/map":33,"es5-ext/object/valid-callable":39,"es5-ext/object/valid-value":40}],13:[function(require,module,exports){
+},{"es5-ext/object/copy":33,"es5-ext/object/map":41,"es5-ext/object/valid-callable":47,"es5-ext/object/valid-value":48}],21:[function(require,module,exports){
 'use strict';
 
 var assign        = require('es5-ext/object/assign')
@@ -2287,7 +3498,7 @@ d.gs = function (dscr, get, set/*, options*/) {
 	return !options ? desc : assign(normalizeOpts(options), desc);
 };
 
-},{"es5-ext/object/assign":22,"es5-ext/object/is-callable":28,"es5-ext/object/normalize-options":34,"es5-ext/string/#/contains":41}],14:[function(require,module,exports){
+},{"es5-ext/object/assign":30,"es5-ext/object/is-callable":36,"es5-ext/object/normalize-options":42,"es5-ext/string/#/contains":49}],22:[function(require,module,exports){
 // Inspired by Google Closure:
 // http://closure-library.googlecode.com/svn/docs/
 // closure_goog_array_array.js.html#goog.array.clear
@@ -2301,7 +3512,7 @@ module.exports = function () {
 	return this;
 };
 
-},{"../../object/valid-value":40}],15:[function(require,module,exports){
+},{"../../object/valid-value":48}],23:[function(require,module,exports){
 'use strict';
 
 var toPosInt = require('../../number/to-pos-integer')
@@ -2332,14 +3543,14 @@ module.exports = function (searchElement/*, fromIndex*/) {
 	return -1;
 };
 
-},{"../../number/to-pos-integer":20,"../../object/valid-value":40}],16:[function(require,module,exports){
+},{"../../number/to-pos-integer":28,"../../object/valid-value":48}],24:[function(require,module,exports){
 'use strict';
 
 module.exports = require('./is-implemented')()
 	? Math.sign
 	: require('./shim');
 
-},{"./is-implemented":17,"./shim":18}],17:[function(require,module,exports){
+},{"./is-implemented":25,"./shim":26}],25:[function(require,module,exports){
 'use strict';
 
 module.exports = function () {
@@ -2348,7 +3559,7 @@ module.exports = function () {
 	return ((sign(10) === 1) && (sign(-20) === -1));
 };
 
-},{}],18:[function(require,module,exports){
+},{}],26:[function(require,module,exports){
 'use strict';
 
 module.exports = function (value) {
@@ -2357,7 +3568,7 @@ module.exports = function (value) {
 	return (value > 0) ? 1 : -1;
 };
 
-},{}],19:[function(require,module,exports){
+},{}],27:[function(require,module,exports){
 'use strict';
 
 var sign = require('../math/sign')
@@ -2371,7 +3582,7 @@ module.exports = function (value) {
 	return sign(value) * floor(abs(value));
 };
 
-},{"../math/sign":16}],20:[function(require,module,exports){
+},{"../math/sign":24}],28:[function(require,module,exports){
 'use strict';
 
 var toInteger = require('./to-integer')
@@ -2380,7 +3591,7 @@ var toInteger = require('./to-integer')
 
 module.exports = function (value) { return max(0, toInteger(value)); };
 
-},{"./to-integer":19}],21:[function(require,module,exports){
+},{"./to-integer":27}],29:[function(require,module,exports){
 // Internal method, used by iteration functions.
 // Calls a function for each key-value pair found in object
 // Optionally takes compareFn to iterate object in specific order
@@ -2411,14 +3622,14 @@ module.exports = function (method, defVal) {
 	};
 };
 
-},{"./is-callable":28,"./valid-callable":39,"./valid-value":40}],22:[function(require,module,exports){
+},{"./is-callable":36,"./valid-callable":47,"./valid-value":48}],30:[function(require,module,exports){
 'use strict';
 
 module.exports = require('./is-implemented')()
 	? Object.assign
 	: require('./shim');
 
-},{"./is-implemented":23,"./shim":24}],23:[function(require,module,exports){
+},{"./is-implemented":31,"./shim":32}],31:[function(require,module,exports){
 'use strict';
 
 module.exports = function () {
@@ -2429,7 +3640,7 @@ module.exports = function () {
 	return (obj.foo + obj.bar + obj.trzy) === 'razdwatrzy';
 };
 
-},{}],24:[function(require,module,exports){
+},{}],32:[function(require,module,exports){
 'use strict';
 
 var keys  = require('../keys')
@@ -2453,7 +3664,7 @@ module.exports = function (dest, src/*, …srcn*/) {
 	return dest;
 };
 
-},{"../keys":30,"../valid-value":40}],25:[function(require,module,exports){
+},{"../keys":38,"../valid-value":48}],33:[function(require,module,exports){
 'use strict';
 
 var assign = require('./assign')
@@ -2465,7 +3676,7 @@ module.exports = function (obj) {
 	return assign({}, obj);
 };
 
-},{"./assign":22,"./valid-value":40}],26:[function(require,module,exports){
+},{"./assign":30,"./valid-value":48}],34:[function(require,module,exports){
 // Workaround for http://code.google.com/p/v8/issues/detail?id=2804
 
 'use strict';
@@ -2503,19 +3714,19 @@ module.exports = (function () {
 	};
 }());
 
-},{"./set-prototype-of/is-implemented":37,"./set-prototype-of/shim":38}],27:[function(require,module,exports){
+},{"./set-prototype-of/is-implemented":45,"./set-prototype-of/shim":46}],35:[function(require,module,exports){
 'use strict';
 
 module.exports = require('./_iterate')('forEach');
 
-},{"./_iterate":21}],28:[function(require,module,exports){
+},{"./_iterate":29}],36:[function(require,module,exports){
 // Deprecated
 
 'use strict';
 
 module.exports = function (obj) { return typeof obj === 'function'; };
 
-},{}],29:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 'use strict';
 
 var map = { function: true, object: true };
@@ -2524,14 +3735,14 @@ module.exports = function (x) {
 	return ((x != null) && map[typeof x]) || false;
 };
 
-},{}],30:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 'use strict';
 
 module.exports = require('./is-implemented')()
 	? Object.keys
 	: require('./shim');
 
-},{"./is-implemented":31,"./shim":32}],31:[function(require,module,exports){
+},{"./is-implemented":39,"./shim":40}],39:[function(require,module,exports){
 'use strict';
 
 module.exports = function () {
@@ -2541,7 +3752,7 @@ module.exports = function () {
 	} catch (e) { return false; }
 };
 
-},{}],32:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 'use strict';
 
 var keys = Object.keys;
@@ -2550,7 +3761,7 @@ module.exports = function (object) {
 	return keys(object == null ? object : Object(object));
 };
 
-},{}],33:[function(require,module,exports){
+},{}],41:[function(require,module,exports){
 'use strict';
 
 var callable = require('./valid-callable')
@@ -2567,7 +3778,7 @@ module.exports = function (obj, cb/*, thisArg*/) {
 	return o;
 };
 
-},{"./for-each":27,"./valid-callable":39}],34:[function(require,module,exports){
+},{"./for-each":35,"./valid-callable":47}],42:[function(require,module,exports){
 'use strict';
 
 var forEach = Array.prototype.forEach, create = Object.create;
@@ -2586,7 +3797,7 @@ module.exports = function (options/*, …options*/) {
 	return result;
 };
 
-},{}],35:[function(require,module,exports){
+},{}],43:[function(require,module,exports){
 'use strict';
 
 var forEach = Array.prototype.forEach, create = Object.create;
@@ -2597,14 +3808,14 @@ module.exports = function (arg/*, …args*/) {
 	return set;
 };
 
-},{}],36:[function(require,module,exports){
+},{}],44:[function(require,module,exports){
 'use strict';
 
 module.exports = require('./is-implemented')()
 	? Object.setPrototypeOf
 	: require('./shim');
 
-},{"./is-implemented":37,"./shim":38}],37:[function(require,module,exports){
+},{"./is-implemented":45,"./shim":46}],45:[function(require,module,exports){
 'use strict';
 
 var create = Object.create, getPrototypeOf = Object.getPrototypeOf
@@ -2617,7 +3828,7 @@ module.exports = function (/*customCreate*/) {
 	return getPrototypeOf(setPrototypeOf(customCreate(null), x)) === x;
 };
 
-},{}],38:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 // Big thanks to @WebReflection for sorting this out
 // https://gist.github.com/WebReflection/5593554
 
@@ -2692,7 +3903,7 @@ module.exports = (function (status) {
 
 require('../create');
 
-},{"../create":26,"../is-object":29,"../valid-value":40}],39:[function(require,module,exports){
+},{"../create":34,"../is-object":37,"../valid-value":48}],47:[function(require,module,exports){
 'use strict';
 
 module.exports = function (fn) {
@@ -2700,7 +3911,7 @@ module.exports = function (fn) {
 	return fn;
 };
 
-},{}],40:[function(require,module,exports){
+},{}],48:[function(require,module,exports){
 'use strict';
 
 module.exports = function (value) {
@@ -2708,14 +3919,14 @@ module.exports = function (value) {
 	return value;
 };
 
-},{}],41:[function(require,module,exports){
+},{}],49:[function(require,module,exports){
 'use strict';
 
 module.exports = require('./is-implemented')()
 	? String.prototype.contains
 	: require('./shim');
 
-},{"./is-implemented":42,"./shim":43}],42:[function(require,module,exports){
+},{"./is-implemented":50,"./shim":51}],50:[function(require,module,exports){
 'use strict';
 
 var str = 'razdwatrzy';
@@ -2725,7 +3936,7 @@ module.exports = function () {
 	return ((str.contains('dwa') === true) && (str.contains('foo') === false));
 };
 
-},{}],43:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
 'use strict';
 
 var indexOf = String.prototype.indexOf;
@@ -2734,7 +3945,7 @@ module.exports = function (searchString/*, position*/) {
 	return indexOf.call(this, searchString, arguments[1]) > -1;
 };
 
-},{}],44:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 'use strict';
 
 var toString = Object.prototype.toString
@@ -2746,7 +3957,7 @@ module.exports = function (x) {
 		((x instanceof String) || (toString.call(x) === id))) || false;
 };
 
-},{}],45:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
 'use strict';
 
 var setPrototypeOf = require('es5-ext/object/set-prototype-of')
@@ -2778,7 +3989,7 @@ ArrayIterator.prototype = Object.create(Iterator.prototype, {
 	toString: d(function () { return '[object Array Iterator]'; })
 });
 
-},{"./":48,"d":13,"es5-ext/object/set-prototype-of":36,"es5-ext/string/#/contains":41}],46:[function(require,module,exports){
+},{"./":56,"d":21,"es5-ext/object/set-prototype-of":44,"es5-ext/string/#/contains":49}],54:[function(require,module,exports){
 'use strict';
 
 var callable = require('es5-ext/object/valid-callable')
@@ -2824,7 +4035,7 @@ module.exports = function (iterable, cb/*, thisArg*/) {
 	}
 };
 
-},{"./get":47,"es5-ext/object/valid-callable":39,"es5-ext/string/is-string":44}],47:[function(require,module,exports){
+},{"./get":55,"es5-ext/object/valid-callable":47,"es5-ext/string/is-string":52}],55:[function(require,module,exports){
 'use strict';
 
 var isString = require('es5-ext/string/is-string')
@@ -2839,7 +4050,7 @@ module.exports = function (obj) {
 	return new ArrayIterator(obj);
 };
 
-},{"./array":45,"./string":55,"./valid-iterable":56,"es5-ext/string/is-string":44,"es6-symbol":50}],48:[function(require,module,exports){
+},{"./array":53,"./string":63,"./valid-iterable":64,"es5-ext/string/is-string":52,"es6-symbol":58}],56:[function(require,module,exports){
 'use strict';
 
 var clear    = require('es5-ext/array/#/clear')
@@ -2931,7 +4142,7 @@ defineProperty(Iterator.prototype, Symbol.iterator, d(function () {
 }));
 defineProperty(Iterator.prototype, Symbol.toStringTag, d('', 'Iterator'));
 
-},{"d":13,"d/auto-bind":12,"es5-ext/array/#/clear":14,"es5-ext/object/assign":22,"es5-ext/object/valid-callable":39,"es5-ext/object/valid-value":40,"es6-symbol":50}],49:[function(require,module,exports){
+},{"d":21,"d/auto-bind":20,"es5-ext/array/#/clear":22,"es5-ext/object/assign":30,"es5-ext/object/valid-callable":47,"es5-ext/object/valid-value":48,"es6-symbol":58}],57:[function(require,module,exports){
 'use strict';
 
 var isString       = require('es5-ext/string/is-string')
@@ -2946,12 +4157,12 @@ module.exports = function (value) {
 	return (typeof value[iteratorSymbol] === 'function');
 };
 
-},{"es5-ext/string/is-string":44,"es6-symbol":50}],50:[function(require,module,exports){
+},{"es5-ext/string/is-string":52,"es6-symbol":58}],58:[function(require,module,exports){
 'use strict';
 
 module.exports = require('./is-implemented')() ? Symbol : require('./polyfill');
 
-},{"./is-implemented":51,"./polyfill":53}],51:[function(require,module,exports){
+},{"./is-implemented":59,"./polyfill":61}],59:[function(require,module,exports){
 'use strict';
 
 module.exports = function () {
@@ -2971,14 +4182,14 @@ module.exports = function () {
 	return true;
 };
 
-},{}],52:[function(require,module,exports){
+},{}],60:[function(require,module,exports){
 'use strict';
 
 module.exports = function (x) {
 	return (x && ((typeof x === 'symbol') || (x['@@toStringTag'] === 'Symbol'))) || false;
 };
 
-},{}],53:[function(require,module,exports){
+},{}],61:[function(require,module,exports){
 'use strict';
 
 var d              = require('d')
@@ -3057,7 +4268,7 @@ defineProperty(HiddenSymbol.prototype, Symbol.toPrimitive,
 defineProperty(HiddenSymbol.prototype, Symbol.toStringTag,
 	d('c', Symbol.prototype[Symbol.toStringTag]));
 
-},{"./validate-symbol":54,"d":13}],54:[function(require,module,exports){
+},{"./validate-symbol":62,"d":21}],62:[function(require,module,exports){
 'use strict';
 
 var isSymbol = require('./is-symbol');
@@ -3067,7 +4278,7 @@ module.exports = function (value) {
 	return value;
 };
 
-},{"./is-symbol":52}],55:[function(require,module,exports){
+},{"./is-symbol":60}],63:[function(require,module,exports){
 // Thanks @mathiasbynens
 // http://mathiasbynens.be/notes/javascript-unicode#iterating-over-symbols
 
@@ -3106,7 +4317,7 @@ StringIterator.prototype = Object.create(Iterator.prototype, {
 	toString: d(function () { return '[object String Iterator]'; })
 });
 
-},{"./":48,"d":13,"es5-ext/object/set-prototype-of":36}],56:[function(require,module,exports){
+},{"./":56,"d":21,"es5-ext/object/set-prototype-of":44}],64:[function(require,module,exports){
 'use strict';
 
 var isIterable = require('./is-iterable');
@@ -3116,9 +4327,9 @@ module.exports = function (value) {
 	return value;
 };
 
-},{"./is-iterable":49}],57:[function(require,module,exports){
-arguments[4][50][0].apply(exports,arguments)
-},{"./is-implemented":58,"./polyfill":59}],58:[function(require,module,exports){
+},{"./is-iterable":57}],65:[function(require,module,exports){
+arguments[4][58][0].apply(exports,arguments)
+},{"./is-implemented":66,"./polyfill":67}],66:[function(require,module,exports){
 'use strict';
 
 module.exports = function () {
@@ -3139,7 +4350,7 @@ module.exports = function () {
 	return true;
 };
 
-},{}],59:[function(require,module,exports){
+},{}],67:[function(require,module,exports){
 'use strict';
 
 var d = require('d')
@@ -3194,7 +4405,7 @@ Object.defineProperty(Symbol.prototype, Symbol.toPrimitive, d('',
 	}));
 Object.defineProperty(Symbol.prototype, Symbol.toStringTag, d('c', 'Symbol'));
 
-},{"d":13}],60:[function(require,module,exports){
+},{"d":21}],68:[function(require,module,exports){
 'use strict';
 
 var d        = require('d')
@@ -3328,7 +4539,7 @@ module.exports = exports = function (o) {
 };
 exports.methods = methods;
 
-},{"d":13,"es5-ext/object/valid-callable":39}],61:[function(require,module,exports){
+},{"d":21,"es5-ext/object/valid-callable":47}],69:[function(require,module,exports){
 'use strict';
 
 var clear          = require('es5-ext/array/#/clear')
@@ -3430,7 +4641,7 @@ Object.defineProperty(MapPoly.prototype, Symbol.iterator, d(function () {
 }));
 Object.defineProperty(MapPoly.prototype, Symbol.toStringTag, d('c', 'Map'));
 
-},{"./is-native-implemented":9,"./lib/iterator":11,"d":13,"es5-ext/array/#/clear":14,"es5-ext/array/#/e-index-of":15,"es5-ext/object/set-prototype-of":36,"es5-ext/object/valid-callable":39,"es5-ext/object/valid-value":40,"es6-iterator/for-of":46,"es6-iterator/valid-iterable":56,"es6-symbol":57,"event-emitter":60}],62:[function(require,module,exports){
+},{"./is-native-implemented":17,"./lib/iterator":19,"d":21,"es5-ext/array/#/clear":22,"es5-ext/array/#/e-index-of":23,"es5-ext/object/set-prototype-of":44,"es5-ext/object/valid-callable":47,"es5-ext/object/valid-value":48,"es6-iterator/for-of":54,"es6-iterator/valid-iterable":64,"es6-symbol":65,"event-emitter":68}],70:[function(require,module,exports){
 'use strict';
 
 function ToObject(val) {
@@ -3469,7 +4680,7 @@ module.exports = Object.assign || function (target, source) {
 	return to;
 };
 
-},{}],63:[function(require,module,exports){
+},{}],71:[function(require,module,exports){
 (function (process){
 /*!
  * async
@@ -4596,7 +5807,7 @@ module.exports = Object.assign || function (target, source) {
 }());
 
 }).call(this,require("IrXUsu"))
-},{"IrXUsu":113}],64:[function(require,module,exports){
+},{"IrXUsu":121}],72:[function(require,module,exports){
 (function (process,__dirname){
 "use strict";
 
@@ -4792,7 +6003,7 @@ Object.defineProperty(proto, 'version', {
 
 
 }).call(this,require("IrXUsu"),"/node_modules/firmata/node_modules/serialport/node_modules/node-pre-gyp/lib")
-},{"../package":100,"./pre-binding":65,"IrXUsu":113,"events":109,"nopt":68,"npmlog":70,"path":112,"util":128}],65:[function(require,module,exports){
+},{"../package":108,"./pre-binding":73,"IrXUsu":121,"events":117,"nopt":76,"npmlog":78,"path":120,"util":136}],73:[function(require,module,exports){
 "use strict";
 
 var versioning = require('../lib/util/versioning.js');
@@ -4819,7 +6030,7 @@ exports.find = function(package_json_path,opts) {
    return meta.module;
 };
 
-},{"../lib/util/versioning.js":67,"fs":103,"path":112}],66:[function(require,module,exports){
+},{"../lib/util/versioning.js":75,"fs":111,"path":120}],74:[function(require,module,exports){
 module.exports={
   "0.8.0": {
     "node_abi": 1,
@@ -5258,7 +6469,7 @@ module.exports={
     "v8": "4.2"
   }
 }
-},{}],67:[function(require,module,exports){
+},{}],75:[function(require,module,exports){
 (function (process){
 "use strict";
 
@@ -5538,7 +6749,7 @@ module.exports.evaluate = function(package_json,options) {
 };
 
 }).call(this,require("IrXUsu"))
-},{"./abi_crosswalk.json":66,"IrXUsu":113,"path":112,"semver":99,"url":126}],68:[function(require,module,exports){
+},{"./abi_crosswalk.json":74,"IrXUsu":121,"path":120,"semver":107,"url":134}],76:[function(require,module,exports){
 (function (process){
 // info about each config option.
 
@@ -5956,7 +7167,7 @@ function resolveShort (arg, shorthands, shortAbbr, abbrevs) {
 }
 
 }).call(this,require("IrXUsu"))
-},{"IrXUsu":113,"abbrev":69,"path":112,"stream":119,"url":126}],69:[function(require,module,exports){
+},{"IrXUsu":121,"abbrev":77,"path":120,"stream":127,"url":134}],77:[function(require,module,exports){
 
 module.exports = exports = abbrev.abbrev = abbrev
 
@@ -6020,7 +7231,7 @@ function lexSort (a, b) {
   return a === b ? 0 : a > b ? 1 : -1
 }
 
-},{}],70:[function(require,module,exports){
+},{}],78:[function(require,module,exports){
 (function (process){
 'use strict'
 var Progress = require('are-we-there-yet')
@@ -6271,7 +7482,7 @@ log.addLevel('error', 5000, { fg: 'red', bg: 'black' }, 'ERR!')
 log.addLevel('silent', Infinity)
 
 }).call(this,require("IrXUsu"))
-},{"IrXUsu":113,"ansi":71,"are-we-there-yet":73,"events":109,"gauge":98,"util":128}],71:[function(require,module,exports){
+},{"IrXUsu":121,"ansi":79,"are-we-there-yet":81,"events":117,"gauge":106,"util":136}],79:[function(require,module,exports){
 
 /**
  * References:
@@ -6678,7 +7889,7 @@ function toArray (a) {
   return rtn
 }
 
-},{"./newlines":72}],72:[function(require,module,exports){
+},{"./newlines":80}],80:[function(require,module,exports){
 
 /**
  * Accepts any node Stream instance and hijacks its "write()" function,
@@ -6751,7 +7962,7 @@ function processByte (stream, b) {
   }
 }
 
-},{"assert":104}],73:[function(require,module,exports){
+},{"assert":112}],81:[function(require,module,exports){
 "use strict"
 var stream = require("readable-stream");
 var EventEmitter = require("events").EventEmitter
@@ -6883,7 +8094,7 @@ delegate(TrackerStream.prototype, "tracker")
   .method("completed")
   .method("addWork")
 
-},{"delegates":74,"events":109,"readable-stream":84,"util":128}],74:[function(require,module,exports){
+},{"delegates":82,"events":117,"readable-stream":92,"util":136}],82:[function(require,module,exports){
 
 /**
  * Expose `Delegator`.
@@ -7006,7 +8217,7 @@ Delegator.prototype.fluent = function (name) {
   return this;
 };
 
-},{}],75:[function(require,module,exports){
+},{}],83:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -7099,7 +8310,7 @@ function forEach (xs, f) {
 }
 
 }).call(this,require("IrXUsu"))
-},{"./_stream_readable":77,"./_stream_writable":79,"IrXUsu":113,"core-util-is":80,"inherits":81}],76:[function(require,module,exports){
+},{"./_stream_readable":85,"./_stream_writable":87,"IrXUsu":121,"core-util-is":88,"inherits":89}],84:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -7147,7 +8358,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./_stream_transform":78,"core-util-is":80,"inherits":81}],77:[function(require,module,exports){
+},{"./_stream_transform":86,"core-util-is":88,"inherits":89}],85:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -8102,7 +9313,7 @@ function indexOf (xs, x) {
 }
 
 }).call(this,require("IrXUsu"))
-},{"./_stream_duplex":75,"IrXUsu":113,"buffer":106,"core-util-is":80,"events":109,"inherits":81,"isarray":82,"stream":119,"string_decoder/":83,"util":105}],78:[function(require,module,exports){
+},{"./_stream_duplex":83,"IrXUsu":121,"buffer":114,"core-util-is":88,"events":117,"inherits":89,"isarray":90,"stream":127,"string_decoder/":91,"util":113}],86:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -8313,7 +9524,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./_stream_duplex":75,"core-util-is":80,"inherits":81}],79:[function(require,module,exports){
+},{"./_stream_duplex":83,"core-util-is":88,"inherits":89}],87:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -8794,7 +10005,7 @@ function endWritable(stream, state, cb) {
 }
 
 }).call(this,require("IrXUsu"))
-},{"./_stream_duplex":75,"IrXUsu":113,"buffer":106,"core-util-is":80,"inherits":81,"stream":119}],80:[function(require,module,exports){
+},{"./_stream_duplex":83,"IrXUsu":121,"buffer":114,"core-util-is":88,"inherits":89,"stream":127}],88:[function(require,module,exports){
 (function (Buffer){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -8904,7 +10115,7 @@ function objectToString(o) {
   return Object.prototype.toString.call(o);
 }
 }).call(this,require("buffer").Buffer)
-},{"buffer":106}],81:[function(require,module,exports){
+},{"buffer":114}],89:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -8929,12 +10140,12 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],82:[function(require,module,exports){
+},{}],90:[function(require,module,exports){
 module.exports = Array.isArray || function (arr) {
   return Object.prototype.toString.call(arr) == '[object Array]';
 };
 
-},{}],83:[function(require,module,exports){
+},{}],91:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9157,7 +10368,7 @@ function base64DetectIncompleteChar(buffer) {
   this.charLength = this.charReceived ? 3 : 0;
 }
 
-},{"buffer":106}],84:[function(require,module,exports){
+},{"buffer":114}],92:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Stream = require('stream');
 exports.Readable = exports;
@@ -9166,7 +10377,7 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":75,"./lib/_stream_passthrough.js":76,"./lib/_stream_readable.js":77,"./lib/_stream_transform.js":78,"./lib/_stream_writable.js":79,"stream":119}],85:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":83,"./lib/_stream_passthrough.js":84,"./lib/_stream_readable.js":85,"./lib/_stream_transform.js":86,"./lib/_stream_writable.js":87,"stream":127}],93:[function(require,module,exports){
 (function (process){
 "use strict"
 var os = require("os")
@@ -9188,7 +10399,7 @@ var hasUnicode = module.exports = function () {
 }
 
 }).call(this,require("IrXUsu"))
-},{"IrXUsu":113,"child_process":103,"os":111}],86:[function(require,module,exports){
+},{"IrXUsu":121,"child_process":111,"os":119}],94:[function(require,module,exports){
 (function (global){
 /**
  * lodash 3.1.0 (Custom Build) <https://lodash.com/>
@@ -9249,7 +10460,7 @@ function pad(string, length, chars) {
 module.exports = pad;
 
 }).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"lodash._basetostring":87,"lodash._createpadding":88}],87:[function(require,module,exports){
+},{"lodash._basetostring":95,"lodash._createpadding":96}],95:[function(require,module,exports){
 /**
  * lodash 3.0.0 (Custom Build) <https://lodash.com/>
  * Build: `lodash modern modularize exports="npm" -o ./`
@@ -9276,7 +10487,7 @@ function baseToString(value) {
 
 module.exports = baseToString;
 
-},{}],88:[function(require,module,exports){
+},{}],96:[function(require,module,exports){
 (function (global){
 /**
  * lodash 3.6.0 (Custom Build) <https://lodash.com/>
@@ -9319,7 +10530,7 @@ function createPadding(string, length, chars) {
 module.exports = createPadding;
 
 }).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"lodash.repeat":89}],89:[function(require,module,exports){
+},{"lodash.repeat":97}],97:[function(require,module,exports){
 (function (global){
 /**
  * lodash 3.0.0 (Custom Build) <https://lodash.com/>
@@ -9380,7 +10591,7 @@ function repeat(string, n) {
 module.exports = repeat;
 
 }).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"lodash._basetostring":87}],90:[function(require,module,exports){
+},{"lodash._basetostring":95}],98:[function(require,module,exports){
 /**
  * lodash 3.1.1 (Custom Build) <https://lodash.com/>
  * Build: `lodash modern modularize exports="npm" -o ./`
@@ -9432,13 +10643,13 @@ var padLeft = createPadDir();
 
 module.exports = padLeft;
 
-},{"lodash._basetostring":91,"lodash._createpadding":92}],91:[function(require,module,exports){
-module.exports=require(87)
-},{}],92:[function(require,module,exports){
-module.exports=require(88)
-},{"lodash.repeat":93}],93:[function(require,module,exports){
-module.exports=require(89)
-},{"lodash._basetostring":91}],94:[function(require,module,exports){
+},{"lodash._basetostring":99,"lodash._createpadding":100}],99:[function(require,module,exports){
+module.exports=require(95)
+},{}],100:[function(require,module,exports){
+module.exports=require(96)
+},{"lodash.repeat":101}],101:[function(require,module,exports){
+module.exports=require(97)
+},{"lodash._basetostring":99}],102:[function(require,module,exports){
 /**
  * lodash 3.1.1 (Custom Build) <https://lodash.com/>
  * Build: `lodash modern modularize exports="npm" -o ./`
@@ -9490,13 +10701,13 @@ var padRight = createPadDir(true);
 
 module.exports = padRight;
 
-},{"lodash._basetostring":95,"lodash._createpadding":96}],95:[function(require,module,exports){
-module.exports=require(87)
-},{}],96:[function(require,module,exports){
-module.exports=require(88)
-},{"lodash.repeat":97}],97:[function(require,module,exports){
-module.exports=require(89)
-},{"lodash._basetostring":95}],98:[function(require,module,exports){
+},{"lodash._basetostring":103,"lodash._createpadding":104}],103:[function(require,module,exports){
+module.exports=require(95)
+},{}],104:[function(require,module,exports){
+module.exports=require(96)
+},{"lodash.repeat":105}],105:[function(require,module,exports){
+module.exports=require(97)
+},{"lodash._basetostring":103}],106:[function(require,module,exports){
 (function (process){
 "use strict"
 var hasUnicode = require("has-unicode")
@@ -9709,7 +10920,7 @@ ProgressBar.prototype.renderValue = function (template, value) {
 }
 
 }).call(this,require("IrXUsu"))
-},{"IrXUsu":113,"ansi":71,"has-unicode":85,"lodash.pad":86,"lodash.padleft":90,"lodash.padright":94}],99:[function(require,module,exports){
+},{"IrXUsu":121,"ansi":79,"has-unicode":93,"lodash.pad":94,"lodash.padleft":98,"lodash.padright":102}],107:[function(require,module,exports){
 ;(function(exports) {
 
 // export the class if we are in a Node-like system.
@@ -10909,7 +12120,7 @@ if (typeof define === 'function' && define.amd)
   semver = {}
 );
 
-},{}],100:[function(require,module,exports){
+},{}],108:[function(require,module,exports){
 module.exports={
   "name": "node-pre-gyp",
   "description": "Node.js native addon binary install tool",
@@ -11026,7 +12237,7 @@ module.exports={
   "readme": "ERROR: No README data found!"
 }
 
-},{}],101:[function(require,module,exports){
+},{}],109:[function(require,module,exports){
 (function (Buffer){
 /*jslint node: true */
 'use strict';
@@ -11095,7 +12306,7 @@ module.exports = {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":106}],102:[function(require,module,exports){
+},{"buffer":114}],110:[function(require,module,exports){
 (function (process,Buffer,__dirname){
 'use strict';
 
@@ -11822,9 +13033,9 @@ util.inherits(SerialPortFactory, EventEmitter);
 module.exports = new SerialPortFactory();
 
 }).call(this,require("IrXUsu"),require("buffer").Buffer,"/node_modules/firmata/node_modules/serialport")
-},{"./parsers":101,"IrXUsu":113,"async":63,"buffer":106,"child_process":103,"debug":103,"events":109,"fs":103,"node-pre-gyp":64,"path":112,"stream":119,"util":128}],103:[function(require,module,exports){
+},{"./parsers":109,"IrXUsu":121,"async":71,"buffer":114,"child_process":111,"debug":111,"events":117,"fs":111,"node-pre-gyp":72,"path":120,"stream":127,"util":136}],111:[function(require,module,exports){
 
-},{}],104:[function(require,module,exports){
+},{}],112:[function(require,module,exports){
 // http://wiki.commonjs.org/wiki/Unit_Testing/1.0
 //
 // THIS IS NOT TESTED NOR LIKELY TO WORK OUTSIDE V8!
@@ -12186,9 +13397,9 @@ var objectKeys = Object.keys || function (obj) {
   return keys;
 };
 
-},{"util/":128}],105:[function(require,module,exports){
-module.exports=require(103)
-},{}],106:[function(require,module,exports){
+},{"util/":136}],113:[function(require,module,exports){
+module.exports=require(111)
+},{}],114:[function(require,module,exports){
 /*!
  * The buffer module from node.js, for the browser.
  *
@@ -13299,7 +14510,7 @@ function assert (test, message) {
   if (!test) throw new Error(message || 'Failed assertion')
 }
 
-},{"base64-js":107,"ieee754":108}],107:[function(require,module,exports){
+},{"base64-js":115,"ieee754":116}],115:[function(require,module,exports){
 var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 ;(function (exports) {
@@ -13425,7 +14636,7 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 	exports.fromByteArray = uint8ToBase64
 }(typeof exports === 'undefined' ? (this.base64js = {}) : exports))
 
-},{}],108:[function(require,module,exports){
+},{}],116:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
   var e, m
   var eLen = nBytes * 8 - mLen - 1
@@ -13511,7 +14722,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],109:[function(require,module,exports){
+},{}],117:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -13814,9 +15025,9 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],110:[function(require,module,exports){
-module.exports=require(81)
-},{}],111:[function(require,module,exports){
+},{}],118:[function(require,module,exports){
+module.exports=require(89)
+},{}],119:[function(require,module,exports){
 exports.endianness = function () { return 'LE' };
 
 exports.hostname = function () {
@@ -13863,7 +15074,7 @@ exports.tmpdir = exports.tmpDir = function () {
 
 exports.EOL = '\n';
 
-},{}],112:[function(require,module,exports){
+},{}],120:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -14091,7 +15302,7 @@ var substr = 'ab'.substr(-1) === 'b'
 ;
 
 }).call(this,require("IrXUsu"))
-},{"IrXUsu":113}],113:[function(require,module,exports){
+},{"IrXUsu":121}],121:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -14156,7 +15367,7 @@ process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
 
-},{}],114:[function(require,module,exports){
+},{}],122:[function(require,module,exports){
 (function (global){
 /*! http://mths.be/punycode v1.2.4 by @mathias */
 ;(function(root) {
@@ -14667,7 +15878,7 @@ process.chdir = function (dir) {
 }(this));
 
 }).call(this,typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],115:[function(require,module,exports){
+},{}],123:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -14753,7 +15964,7 @@ var isArray = Array.isArray || function (xs) {
   return Object.prototype.toString.call(xs) === '[object Array]';
 };
 
-},{}],116:[function(require,module,exports){
+},{}],124:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -14840,13 +16051,13 @@ var objectKeys = Object.keys || function (obj) {
   return res;
 };
 
-},{}],117:[function(require,module,exports){
+},{}],125:[function(require,module,exports){
 'use strict';
 
 exports.decode = exports.parse = require('./decode');
 exports.encode = exports.stringify = require('./encode');
 
-},{"./decode":115,"./encode":116}],118:[function(require,module,exports){
+},{"./decode":123,"./encode":124}],126:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -14920,7 +16131,7 @@ function onend() {
   });
 }
 
-},{"./readable.js":122,"./writable.js":124,"inherits":110,"process/browser.js":120}],119:[function(require,module,exports){
+},{"./readable.js":130,"./writable.js":132,"inherits":118,"process/browser.js":128}],127:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -15049,7 +16260,7 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"./duplex.js":118,"./passthrough.js":121,"./readable.js":122,"./transform.js":123,"./writable.js":124,"events":109,"inherits":110}],120:[function(require,module,exports){
+},{"./duplex.js":126,"./passthrough.js":129,"./readable.js":130,"./transform.js":131,"./writable.js":132,"events":117,"inherits":118}],128:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -15104,7 +16315,7 @@ process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
 
-},{}],121:[function(require,module,exports){
+},{}],129:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -15147,7 +16358,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./transform.js":123,"inherits":110}],122:[function(require,module,exports){
+},{"./transform.js":131,"inherits":118}],130:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -16084,7 +17295,7 @@ function indexOf (xs, x) {
 }
 
 }).call(this,require("IrXUsu"))
-},{"./index.js":119,"IrXUsu":113,"buffer":106,"events":109,"inherits":110,"process/browser.js":120,"string_decoder":125}],123:[function(require,module,exports){
+},{"./index.js":127,"IrXUsu":121,"buffer":114,"events":117,"inherits":118,"process/browser.js":128,"string_decoder":133}],131:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -16290,7 +17501,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./duplex.js":118,"inherits":110}],124:[function(require,module,exports){
+},{"./duplex.js":126,"inherits":118}],132:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -16678,7 +17889,7 @@ function endWritable(stream, state, cb) {
   state.ended = true;
 }
 
-},{"./index.js":119,"buffer":106,"inherits":110,"process/browser.js":120}],125:[function(require,module,exports){
+},{"./index.js":127,"buffer":114,"inherits":118,"process/browser.js":128}],133:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -16871,7 +18082,7 @@ function base64DetectIncompleteChar(buffer) {
   return incomplete;
 }
 
-},{"buffer":106}],126:[function(require,module,exports){
+},{"buffer":114}],134:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -17580,14 +18791,14 @@ function isNullOrUndefined(arg) {
   return  arg == null;
 }
 
-},{"punycode":114,"querystring":117}],127:[function(require,module,exports){
+},{"punycode":122,"querystring":125}],135:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],128:[function(require,module,exports){
+},{}],136:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -18177,1004 +19388,38 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require("IrXUsu"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":127,"IrXUsu":113,"inherits":110}],129:[function(require,module,exports){
-(function (process){
-'use strict';
-
-if (process) {
-  if (process.browser) {
-    require('./fxos/blue_yeast');
-  }
-  else {
-    exports.Bluetooth = require('./node/blue_yeast').Bluetooth;
-  }
-}
-
-}).call(this,require("IrXUsu"))
-},{"./fxos/blue_yeast":130,"./node/blue_yeast":132,"IrXUsu":113}],130:[function(require,module,exports){
-(function (process){
-/* global BluetoothDevice */
-'use strict';
-if (process) {
-  var EventEmitter2 = require('eventemitter2').EventEmitter2;
-  require('./bluetooth_device');
-}
-
-(function(exports) {
-  var BLE_SERVICE_UUID = '713d0000-503e-4c75-ba94-3148f18d941e';
-  var BLE_RX_UUID = '713d0003-503e-4c75-ba94-3148f18d941e';
-  var BLE_TX_UUID = '713d0002-503e-4c75-ba94-3148f18d941e';
-  // The timeout to connect next device. It's used for workaround.
-  var CONNECTING_TIMEOUT = 1000;
-  var bluetooth = navigator.mozBluetooth;
-
-  function BlueYeast() {
-    this._devices = [];
-  }
-
-  BlueYeast.prototype.CCCD_UUID = '00002902-0000-1000-8000-00805f9b34fb';
-  BlueYeast.prototype._devices = null;
-  BlueYeast.prototype._scan = null;
-  BlueYeast.prototype._isScanning = false;
-
-  // TODO: Connect multiple devices at one time.
-  BlueYeast.prototype.connect = function(name, address) {
-    var device = new BluetoothDevice(name, address);
-    // TODO: Pop the device from array once it is disconnected.
-    this._devices.push(device);
-    this._startScan();
-    return device;
-  };
-
-  BlueYeast.prototype._startScan = function() {
-    if (this._isScanning) {
-      return;
-    }
-    if (bluetooth.defaultAdapter) {
-      // For stability, we use startDiscovery to instead of startLeScan.
-      return bluetooth.defaultAdapter.startDiscovery([]).then(scan => {
-        this._isScanning = true;
-        this._scan = scan;
-        scan.addEventListener('devicefound',
-          this._handleDevicefound.bind(this));
-      }).catch(() => {
-        this._isScanning = false;
-        this._startScan();
-      });
-    } else {
-      bluetooth.addEventListener('attributechanged',
-        this._handleAttributechanged.bind(this));
-    }
-  };
-
-  // Currently, we cannot stop scan, or the devices don't work correctly.
-  BlueYeast.prototype._stopScan = function() {
-    if (!this._isScanning) {
-      return;
-    }
-    bluetooth.defaultAdapter.stopDiscovery(this._scan).then(() => {
-      this._isScanning = false;
-    });
-  };
-
-  BlueYeast.prototype._handleAttributechanged = function(evt) {
-    for (var key in evt.attrs) {
-      switch (evt.attrs[key]) {
-        case 'defaultAdapter':
-          bluetooth.removeEventListener('attributechanged',
-            this._handleAttributechanged);
-          this._startScan();
-          break;
-      }
-    }
-  };
-
-  BlueYeast.prototype._handleDevicefound = function(evt) {
-    var device = evt.device;
-    var gatt = device.gatt;
-    device = this._devices.find(function(item) {
-      return (item.address === device.address ||
-        item.name === device.name) &&
-        !device.paired;
-    });
-    if (device) {
-      this._stopScan();
-      // XXX: Workaround to connect multiple devices correctly.
-      setTimeout(() => {
-        device.gatt = gatt;
-        gatt.connect().then(() => {
-          this._discoverServices(device, gatt);
-        });
-      }, CONNECTING_TIMEOUT * this._devices.length);
-    }
-  };
-
-  BlueYeast.prototype._discoverServices = function(device, gatt) {
-    return gatt.discoverServices().then(() => {
-      var service = gatt.services.find(function(service) {
-        return service.uuid === BLE_SERVICE_UUID;
-      });
-      var writeCharacteristic =
-        service.characteristics.find(function(characteristic) {
-          return characteristic.uuid === BLE_RX_UUID;
-        });
-      var notifyCharacteristic =
-        service.characteristics.find(function(characteristic) {
-          return characteristic.uuid === BLE_TX_UUID;
-        });
-      device.writeCharacteristic = writeCharacteristic;
-      device.notifyCharacteristic = notifyCharacteristic;
-      device.emit('connect', device);
-    });
-  };
-
-  exports.Bluetooth = new BlueYeast();
-  // For testing.
-  exports.BlueYeast = BlueYeast;
-}(window));
-
-}).call(this,require("IrXUsu"))
-},{"./bluetooth_device":131,"IrXUsu":113,"eventemitter2":134}],131:[function(require,module,exports){
-(function (process,Buffer){
-/* global Bluetooth, EventEmitter2 */
-'use strict';
-if (process) {
-  var EventEmitter2 = require('eventemitter2').EventEmitter2;
-}
-
-(function(exports) {
-  function BluetoothDevice(name, address) {
-    this.name = name;
-    this.address = address;
-  }
-
-  BluetoothDevice.prototype = Object.create(EventEmitter2.prototype);
-
-  BluetoothDevice.prototype.gatt = null;
-  BluetoothDevice.prototype.writeCharacteristic = null;
-  BluetoothDevice.prototype.notifyCharacteristic = null;
-  BluetoothDevice.prototype._isNotificationsStarted = false;
-
-  /**
-   * Send data to BLE device in bytes.
-   * @param {String|Uint8Array} data Data to be sent,
-   * accept Uint8Array or String in hex format.
-   * @throws "Data can't be empty" if data is null|undfined
-   * @throws "Unsupported data type" if data is not String|Uint8Array
-   */
-  BluetoothDevice.prototype.send = function(data) {
-    if (data instanceof Uint8Array) {
-      this.writeCharacteristic.writeValue(data.buffer);
-    } else if (data instanceof Buffer) {
-      this.writeCharacteristic.write(data, false);
-    } else if (data instanceof String) {
-      this.writeCharacteristic.writeValue(this._parseHexString(data));
-    } else if (data) {
-      throw 'Unsupported data type ' + data.constructor.name +
-        ', must be Uint8Array or Hex String';
-    } else {
-      throw 'Data cannot be empty';
-    }
-  };
-
-  BluetoothDevice.prototype.startNotifications = function() {
-    if (this._isNotificationsStarted) {
-      return;
-    } else {
-      this._isNotificationsStarted = true;
-    }
-    var characteristic = this.notifyCharacteristic;
-    this.gatt.addEventListener('characteristicchanged', (evt) => {
-      this.emit('data', evt.characteristic.value);
-    });
-    characteristic.startNotifications();
-    var descriptor = characteristic.descriptors.find(function(descriptor) {
-      return descriptor.uuid === Bluetooth.CCCD_UUID;
-    });
-    if (descriptor) {
-      var arrayBuffer = new ArrayBuffer(2);
-      var uint8Array = new Uint8Array(arrayBuffer);
-      uint8Array[0] = 0x01;
-      uint8Array[1] = 0x00;
-      descriptor.writeValue(arrayBuffer);
-    }
-  };
-
-  BluetoothDevice.prototype.stopNotifications = function() {
-    this._isNotificationsStarted = false;
-    this.notifyCharacteristic.stopNotifications();
-  };
-
-  BluetoothDevice.prototype._parseHexString = function(str) {
-    var arrayBuffer = new ArrayBuffer(Math.ceil(str.length / 2));
-    var uint8Array = new Uint8Array(arrayBuffer);
-    for (var i = 0, j = 0; i < str.length; i += 2, j++) {
-      uint8Array[j] = parseInt(str.substr(i, 2), 16);
-    }
-    return arrayBuffer;
-  };
-
-  exports.BluetoothDevice = BluetoothDevice;
-}(window));
-
-}).call(this,require("IrXUsu"),require("buffer").Buffer)
-},{"IrXUsu":113,"buffer":106,"eventemitter2":134}],132:[function(require,module,exports){
-/* global module */
-'use strict';
-
-var noble = require('noble');
-var EventEmitter2 = require('eventemitter2').EventEmitter2;
-var BluetoothDevice = require('./bluetooth_device').BluetoothDevice;
-
-(function(exports) {
-  var BLE_SERVICE_UUID = '713d0000503e4c75ba943148f18d941e';
-  var BLE_RX_UUID = '713d0003503e4c75ba943148f18d941e';
-  var BLE_TX_UUID = '713d0002503e4c75ba943148f18d941e';
-  //var BLE_SERVICE_UUID = '713d0000-503e-4c75-ba94-3148f18d941e';
-  //var BLE_RX_UUID = '713d0003-503e-4c75-ba94-3148f18d941e';
-  //var BLE_TX_UUID = '713d0002-503e-4c75-ba94-3148f18d941e';
-  // The timeout to connect next device. It's used for workaround.
-  var CONNECTING_TIMEOUT = 1000;
-  //var bluetooth = navigator.mozBluetooth;
-  BlueYeast.prototype.CCCD_UUID = '00002902-0000-1000-8000-00805f9b34fb';
-  BlueYeast.prototype._devices = null;
-  BlueYeast.prototype._scan = null;
-  BlueYeast.prototype._isScanning = false;
-
-
-  function BlueYeast() {
-    this._devices = [];
-  }
-
-  // TODO: Connect multiple devices at one time.
-  BlueYeast.prototype.connect = function(name, address) {
-    var device = new BluetoothDevice(name, address);
-    // TODO: Pop the device from array once it is disconnected.
-    this._devices.push(device);
-    this._startScan();
-    return device;
-  };
-
-  BlueYeast.prototype._startScan = function() {
-    if (this._isScanning) {
-      return;
-    }
-
-    this._isScanning = true;
-    if (noble.state == 'poweredOn') {
-      noble.on('discover', this._handleDevicefound.bind(this));
-      noble.startScanning();
-    }
-    else {
-      noble.on('stateChange', this._handleStatechanged.bind(this));
-    }
-
-  };
-
-  // Currently, we cannot stop scan, or the devices don't work correctly.
-  BlueYeast.prototype._stopScan = function() {
-    if (!this._isScanning) {
-      return;
-    }
-    this._isScanning = false;
-    noble.stopScanning();
-    //noble.removeEventListener('discover', this._handleDevicefound);
-  };
-
-  BlueYeast.prototype._handleStatechanged = function() {
-    if (noble.state == 'poweredOn') {
-      noble.startScanning();
-      noble.on('discover', this._handleDevicefound.bind(this));
-      //noble.removeEventListener('stateChange', this._handleStatechanged);
-    }
-  };
-
-  BlueYeast.prototype._handleDevicefound = function(peripheral) {
-    var devices = this._devices.filter(function(item) {
-      return (item.address === peripheral.address ||
-        item.name === peripheral.advertisement.localName) &&
-        peripheral.state !== 'connected';
-    });
-    if (devices && devices.length > 0) {
-      this._stopScan();
-      var self = this;
-      // XXX: Workaround to connect multiple devices correctly.
-      setTimeout(function() {
-        devices[0].client = peripheral;
-        peripheral.connect(function() {
-          self._discoverServices(devices[0], peripheral);
-        });
-      }, CONNECTING_TIMEOUT * this._devices.length);
-    }
-  };
-
-  BlueYeast.prototype._discoverServices = function(device, client) {
-    try {
-      client.discoverServices(
-        [BLE_SERVICE_UUID],
-        function(error, services) {
-          services[0].discoverCharacteristics([BLE_RX_UUID, BLE_TX_UUID], function(error, characteristics) {
-            device.writeCharacteristic = characteristics[0];
-            device.notifyCharacteristic = characteristics[1];
-            device.emit('connect', device);
-          });
-      });
-    } catch(e) {
-      console.error(e);
-    }
-  };
-
-  exports.Bluetooth = new BlueYeast();
-  // For testing.
-  exports.BlueYeast = BlueYeast;
-}(exports));
-
-},{"./bluetooth_device":133,"eventemitter2":134,"noble":103}],133:[function(require,module,exports){
-(function (process,Buffer){
-/* global module, Bluetooth, EventEmitter2 */
-'use strict';
-if (process) {
-  var EventEmitter2 = require('eventemitter2').EventEmitter2;
-}
-
-(function(exports) {
-  function BluetoothDevice(name, address) {
-    this.name = name;
-    this.address = address;
-  }
-
-  BluetoothDevice.prototype = Object.create(EventEmitter2.prototype);
-
-  BluetoothDevice.prototype.client = null;
-  BluetoothDevice.prototype.writeCharacteristic = null;
-  BluetoothDevice.prototype.notifyCharacteristic = null;
-  BluetoothDevice.prototype._isNotificationsStarted = false;
-
-  /**
-   * Send data to BLE device in bytes.
-   * @param {String|Uint8Array} data Data to be sent,
-   * accept Uint8Array or String in hex format.
-   * @throws "Data can't be empty" if data is null|undfined
-   * @throws "Unsupported data type" if data is not String|Uint8Array
-   */
-  BluetoothDevice.prototype.send = function(data) {
-    if (data instanceof Uint8Array) {
-      this.writeCharacteristic.write(this._toBuffer(data.buffer), false);
-    } else if (data instanceof Buffer) {
-      this.writeCharacteristic.write(data, false);
-    } else if (data instanceof String) {
-      this.writeCharacteristic.write(this._parseHexString(data), false);
-    } else if (data) {
-      throw 'Unsupported data type ' + data.constructor.name +
-      ', must be Uint8Array or Hex String';
-    } else {
-      throw 'Data cannot be empty';
-    }
-  };
-
-  BluetoothDevice.prototype.startNotifications = function() {
-    if (this._isNotificationsStarted) {
-      return;
-    }
-    this._isNotificationsStarted = true;
-    this.notifyCharacteristic.notify(true);
-    var self = this;
-    this.notifyCharacteristic.on('data', function(data, isNotification) {
-      if (isNotification) {
-        self.emit('data', new Uint8Array(self._toArrayBuffer(data)));
-      }
-    });
-  };
-
-  BluetoothDevice.prototype.stopNotifications = function() {
-    this._isNotificationsStarted = false;
-    this.notifyCharacteristic.notify(false);
-  };
-
-  BluetoothDevice.prototype._parseHexString = function(str) {
-    var arrayBuffer = new ArrayBuffer(Math.ceil(str.length / 2));
-    var uint8Array = new Uint8Array(arrayBuffer);
-    for (var i = 0, j = 0; i < str.length; i += 2, j++) {
-      uint8Array[j] = parseInt(str.substr(i, 2), 16);
-    }
-    return this._toBuffer(arrayBuffer);
-  };
-
-  BluetoothDevice.prototype._toBuffer = function(ab) {
-    var buffer = new Buffer(ab.byteLength);
-    var view = new Uint8Array(ab);
-    for (var i = 0; i < buffer.length; ++i) {
-      buffer[i] = view[i];
-    }
-    return buffer;
-  };
-
-  BluetoothDevice.prototype._toArrayBuffer = function(buffer) {
-    var ab = new ArrayBuffer(buffer.length);
-    var view = new Uint8Array(ab);
-    for (var i = 0; i < buffer.length; ++i) {
-      view[i] = buffer[i];
-    }
-    return ab;
-  };
-
-  exports.BluetoothDevice = BluetoothDevice;
-}(exports));
-
-}).call(this,require("IrXUsu"),require("buffer").Buffer)
-},{"IrXUsu":113,"buffer":106,"eventemitter2":134}],134:[function(require,module,exports){
-/*!
- * EventEmitter2
- * https://github.com/hij1nx/EventEmitter2
- *
- * Copyright (c) 2013 hij1nx
- * Licensed under the MIT license.
- */
-;!function(undefined) {
-
-  var isArray = Array.isArray ? Array.isArray : function _isArray(obj) {
-    return Object.prototype.toString.call(obj) === "[object Array]";
-  };
-  var defaultMaxListeners = 10;
-
-  function init() {
-    this._events = {};
-    if (this._conf) {
-      configure.call(this, this._conf);
-    }
-  }
-
-  function configure(conf) {
-    if (conf) {
-
-      this._conf = conf;
-
-      conf.delimiter && (this.delimiter = conf.delimiter);
-      conf.maxListeners && (this._events.maxListeners = conf.maxListeners);
-      conf.wildcard && (this.wildcard = conf.wildcard);
-      conf.newListener && (this.newListener = conf.newListener);
-
-      if (this.wildcard) {
-        this.listenerTree = {};
-      }
-    }
-  }
-
-  function EventEmitter(conf) {
-    this._events = {};
-    this.newListener = false;
-    configure.call(this, conf);
-  }
-
-  //
-  // Attention, function return type now is array, always !
-  // It has zero elements if no any matches found and one or more
-  // elements (leafs) if there are matches
-  //
-  function searchListenerTree(handlers, type, tree, i) {
-    if (!tree) {
-      return [];
-    }
-    var listeners=[], leaf, len, branch, xTree, xxTree, isolatedBranch, endReached,
-        typeLength = type.length, currentType = type[i], nextType = type[i+1];
-    if (i === typeLength && tree._listeners) {
-      //
-      // If at the end of the event(s) list and the tree has listeners
-      // invoke those listeners.
-      //
-      if (typeof tree._listeners === 'function') {
-        handlers && handlers.push(tree._listeners);
-        return [tree];
-      } else {
-        for (leaf = 0, len = tree._listeners.length; leaf < len; leaf++) {
-          handlers && handlers.push(tree._listeners[leaf]);
-        }
-        return [tree];
-      }
-    }
-
-    if ((currentType === '*' || currentType === '**') || tree[currentType]) {
-      //
-      // If the event emitted is '*' at this part
-      // or there is a concrete match at this patch
-      //
-      if (currentType === '*') {
-        for (branch in tree) {
-          if (branch !== '_listeners' && tree.hasOwnProperty(branch)) {
-            listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i+1));
-          }
-        }
-        return listeners;
-      } else if(currentType === '**') {
-        endReached = (i+1 === typeLength || (i+2 === typeLength && nextType === '*'));
-        if(endReached && tree._listeners) {
-          // The next element has a _listeners, add it to the handlers.
-          listeners = listeners.concat(searchListenerTree(handlers, type, tree, typeLength));
-        }
-
-        for (branch in tree) {
-          if (branch !== '_listeners' && tree.hasOwnProperty(branch)) {
-            if(branch === '*' || branch === '**') {
-              if(tree[branch]._listeners && !endReached) {
-                listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], typeLength));
-              }
-              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i));
-            } else if(branch === nextType) {
-              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i+2));
-            } else {
-              // No match on this one, shift into the tree but not in the type array.
-              listeners = listeners.concat(searchListenerTree(handlers, type, tree[branch], i));
-            }
-          }
-        }
-        return listeners;
+},{"./support/isBuffer":135,"IrXUsu":121,"inherits":118}],137:[function(require,module,exports){
+if (!Object.assign) {
+  Object.defineProperty(Object, 'assign', {
+    enumerable: false,
+    configurable: true,
+    writable: true,
+    value: function(target) {
+      'use strict';
+      if (target === undefined || target === null) {
+        throw new TypeError('Cannot convert first argument to object');
       }
 
-      listeners = listeners.concat(searchListenerTree(handlers, type, tree[currentType], i+1));
-    }
-
-    xTree = tree['*'];
-    if (xTree) {
-      //
-      // If the listener tree will allow any match for this part,
-      // then recursively explore all branches of the tree
-      //
-      searchListenerTree(handlers, type, xTree, i+1);
-    }
-
-    xxTree = tree['**'];
-    if(xxTree) {
-      if(i < typeLength) {
-        if(xxTree._listeners) {
-          // If we have a listener on a '**', it will catch all, so add its handler.
-          searchListenerTree(handlers, type, xxTree, typeLength);
-        }
-
-        // Build arrays of matching next branches and others.
-        for(branch in xxTree) {
-          if(branch !== '_listeners' && xxTree.hasOwnProperty(branch)) {
-            if(branch === nextType) {
-              // We know the next element will match, so jump twice.
-              searchListenerTree(handlers, type, xxTree[branch], i+2);
-            } else if(branch === currentType) {
-              // Current node matches, move into the tree.
-              searchListenerTree(handlers, type, xxTree[branch], i+1);
-            } else {
-              isolatedBranch = {};
-              isolatedBranch[branch] = xxTree[branch];
-              searchListenerTree(handlers, type, { '**': isolatedBranch }, i+1);
-            }
-          }
-        }
-      } else if(xxTree._listeners) {
-        // We have reached the end and still on a '**'
-        searchListenerTree(handlers, type, xxTree, typeLength);
-      } else if(xxTree['*'] && xxTree['*']._listeners) {
-        searchListenerTree(handlers, type, xxTree['*'], typeLength);
-      }
-    }
-
-    return listeners;
-  }
-
-  function growListenerTree(type, listener) {
-
-    type = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
-
-    //
-    // Looks for two consecutive '**', if so, don't add the event at all.
-    //
-    for(var i = 0, len = type.length; i+1 < len; i++) {
-      if(type[i] === '**' && type[i+1] === '**') {
-        return;
-      }
-    }
-
-    var tree = this.listenerTree;
-    var name = type.shift();
-
-    while (name) {
-
-      if (!tree[name]) {
-        tree[name] = {};
-      }
-
-      tree = tree[name];
-
-      if (type.length === 0) {
-
-        if (!tree._listeners) {
-          tree._listeners = listener;
-        }
-        else if(typeof tree._listeners === 'function') {
-          tree._listeners = [tree._listeners, listener];
-        }
-        else if (isArray(tree._listeners)) {
-
-          tree._listeners.push(listener);
-
-          if (!tree._listeners.warned) {
-
-            var m = defaultMaxListeners;
-
-            if (typeof this._events.maxListeners !== 'undefined') {
-              m = this._events.maxListeners;
-            }
-
-            if (m > 0 && tree._listeners.length > m) {
-
-              tree._listeners.warned = true;
-              console.error('(node) warning: possible EventEmitter memory ' +
-                            'leak detected. %d listeners added. ' +
-                            'Use emitter.setMaxListeners() to increase limit.',
-                            tree._listeners.length);
-              console.trace();
-            }
-          }
-        }
-        return true;
-      }
-      name = type.shift();
-    }
-    return true;
-  }
-
-  // By default EventEmitters will print a warning if more than
-  // 10 listeners are added to it. This is a useful default which
-  // helps finding memory leaks.
-  //
-  // Obviously not all Emitters should be limited to 10. This function allows
-  // that to be increased. Set to zero for unlimited.
-
-  EventEmitter.prototype.delimiter = '.';
-
-  EventEmitter.prototype.setMaxListeners = function(n) {
-    this._events || init.call(this);
-    this._events.maxListeners = n;
-    if (!this._conf) this._conf = {};
-    this._conf.maxListeners = n;
-  };
-
-  EventEmitter.prototype.event = '';
-
-  EventEmitter.prototype.once = function(event, fn) {
-    this.many(event, 1, fn);
-    return this;
-  };
-
-  EventEmitter.prototype.many = function(event, ttl, fn) {
-    var self = this;
-
-    if (typeof fn !== 'function') {
-      throw new Error('many only accepts instances of Function');
-    }
-
-    function listener() {
-      if (--ttl === 0) {
-        self.off(event, listener);
-      }
-      fn.apply(this, arguments);
-    }
-
-    listener._origin = fn;
-
-    this.on(event, listener);
-
-    return self;
-  };
-
-  EventEmitter.prototype.emit = function() {
-
-    this._events || init.call(this);
-
-    var type = arguments[0];
-
-    if (type === 'newListener' && !this.newListener) {
-      if (!this._events.newListener) { return false; }
-    }
-
-    // Loop through the *_all* functions and invoke them.
-    if (this._all) {
-      var l = arguments.length;
-      var args = new Array(l - 1);
-      for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
-      for (i = 0, l = this._all.length; i < l; i++) {
-        this.event = type;
-        this._all[i].apply(this, args);
-      }
-    }
-
-    // If there is no 'error' event listener then throw.
-    if (type === 'error') {
-
-      if (!this._all &&
-        !this._events.error &&
-        !(this.wildcard && this.listenerTree.error)) {
-
-        if (arguments[1] instanceof Error) {
-          throw arguments[1]; // Unhandled 'error' event
-        } else {
-          throw new Error("Uncaught, unspecified 'error' event.");
-        }
-        return false;
-      }
-    }
-
-    var handler;
-
-    if(this.wildcard) {
-      handler = [];
-      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
-      searchListenerTree.call(this, handler, ns, this.listenerTree, 0);
-    }
-    else {
-      handler = this._events[type];
-    }
-
-    if (typeof handler === 'function') {
-      this.event = type;
-      if (arguments.length === 1) {
-        handler.call(this);
-      }
-      else if (arguments.length > 1)
-        switch (arguments.length) {
-          case 2:
-            handler.call(this, arguments[1]);
-            break;
-          case 3:
-            handler.call(this, arguments[1], arguments[2]);
-            break;
-          // slower
-          default:
-            var l = arguments.length;
-            var args = new Array(l - 1);
-            for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
-            handler.apply(this, args);
-        }
-      return true;
-    }
-    else if (handler) {
-      var l = arguments.length;
-      var args = new Array(l - 1);
-      for (var i = 1; i < l; i++) args[i - 1] = arguments[i];
-
-      var listeners = handler.slice();
-      for (var i = 0, l = listeners.length; i < l; i++) {
-        this.event = type;
-        listeners[i].apply(this, args);
-      }
-      return (listeners.length > 0) || !!this._all;
-    }
-    else {
-      return !!this._all;
-    }
-
-  };
-
-  EventEmitter.prototype.on = function(type, listener) {
-
-    if (typeof type === 'function') {
-      this.onAny(type);
-      return this;
-    }
-
-    if (typeof listener !== 'function') {
-      throw new Error('on only accepts instances of Function');
-    }
-    this._events || init.call(this);
-
-    // To avoid recursion in the case that type == "newListeners"! Before
-    // adding it to the listeners, first emit "newListeners".
-    this.emit('newListener', type, listener);
-
-    if(this.wildcard) {
-      growListenerTree.call(this, type, listener);
-      return this;
-    }
-
-    if (!this._events[type]) {
-      // Optimize the case of one listener. Don't need the extra array object.
-      this._events[type] = listener;
-    }
-    else if(typeof this._events[type] === 'function') {
-      // Adding the second element, need to change to array.
-      this._events[type] = [this._events[type], listener];
-    }
-    else if (isArray(this._events[type])) {
-      // If we've already got an array, just append.
-      this._events[type].push(listener);
-
-      // Check for listener leak
-      if (!this._events[type].warned) {
-
-        var m = defaultMaxListeners;
-
-        if (typeof this._events.maxListeners !== 'undefined') {
-          m = this._events.maxListeners;
-        }
-
-        if (m > 0 && this._events[type].length > m) {
-
-          this._events[type].warned = true;
-          console.error('(node) warning: possible EventEmitter memory ' +
-                        'leak detected. %d listeners added. ' +
-                        'Use emitter.setMaxListeners() to increase limit.',
-                        this._events[type].length);
-          console.trace();
-        }
-      }
-    }
-    return this;
-  };
-
-  EventEmitter.prototype.onAny = function(fn) {
-
-    if (typeof fn !== 'function') {
-      throw new Error('onAny only accepts instances of Function');
-    }
-
-    if(!this._all) {
-      this._all = [];
-    }
-
-    // Add the function to the event listener collection.
-    this._all.push(fn);
-    return this;
-  };
-
-  EventEmitter.prototype.addListener = EventEmitter.prototype.on;
-
-  EventEmitter.prototype.off = function(type, listener) {
-    if (typeof listener !== 'function') {
-      throw new Error('removeListener only takes instances of Function');
-    }
-
-    var handlers,leafs=[];
-
-    if(this.wildcard) {
-      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
-      leafs = searchListenerTree.call(this, null, ns, this.listenerTree, 0);
-    }
-    else {
-      // does not use listeners(), so no side effect of creating _events[type]
-      if (!this._events[type]) return this;
-      handlers = this._events[type];
-      leafs.push({_listeners:handlers});
-    }
-
-    for (var iLeaf=0; iLeaf<leafs.length; iLeaf++) {
-      var leaf = leafs[iLeaf];
-      handlers = leaf._listeners;
-      if (isArray(handlers)) {
-
-        var position = -1;
-
-        for (var i = 0, length = handlers.length; i < length; i++) {
-          if (handlers[i] === listener ||
-            (handlers[i].listener && handlers[i].listener === listener) ||
-            (handlers[i]._origin && handlers[i]._origin === listener)) {
-            position = i;
-            break;
-          }
-        }
-
-        if (position < 0) {
+      var to = Object(target);
+      for (var i = 1; i < arguments.length; i++) {
+        var nextSource = arguments[i];
+        if (nextSource === undefined || nextSource === null) {
           continue;
         }
+        nextSource = Object(nextSource);
 
-        if(this.wildcard) {
-          leaf._listeners.splice(position, 1);
-        }
-        else {
-          this._events[type].splice(position, 1);
-        }
-
-        if (handlers.length === 0) {
-          if(this.wildcard) {
-            delete leaf._listeners;
-          }
-          else {
-            delete this._events[type];
+        var keysArray = Object.keys(Object(nextSource));
+        for (var nextIndex = 0, len = keysArray.length; nextIndex < len; nextIndex++) {
+          var nextKey = keysArray[nextIndex];
+          var desc = Object.getOwnPropertyDescriptor(nextSource, nextKey);
+          if (desc !== undefined && desc.enumerable) {
+            to[nextKey] = nextSource[nextKey];
           }
         }
-        return this;
       }
-      else if (handlers === listener ||
-        (handlers.listener && handlers.listener === listener) ||
-        (handlers._origin && handlers._origin === listener)) {
-        if(this.wildcard) {
-          delete leaf._listeners;
-        }
-        else {
-          delete this._events[type];
-        }
-      }
+      return to;
     }
-
-    return this;
-  };
-
-  EventEmitter.prototype.offAny = function(fn) {
-    var i = 0, l = 0, fns;
-    if (fn && this._all && this._all.length > 0) {
-      fns = this._all;
-      for(i = 0, l = fns.length; i < l; i++) {
-        if(fn === fns[i]) {
-          fns.splice(i, 1);
-          return this;
-        }
-      }
-    } else {
-      this._all = [];
-    }
-    return this;
-  };
-
-  EventEmitter.prototype.removeListener = EventEmitter.prototype.off;
-
-  EventEmitter.prototype.removeAllListeners = function(type) {
-    if (arguments.length === 0) {
-      !this._events || init.call(this);
-      return this;
-    }
-
-    if(this.wildcard) {
-      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
-      var leafs = searchListenerTree.call(this, null, ns, this.listenerTree, 0);
-
-      for (var iLeaf=0; iLeaf<leafs.length; iLeaf++) {
-        var leaf = leafs[iLeaf];
-        leaf._listeners = null;
-      }
-    }
-    else {
-      if (!this._events[type]) return this;
-      this._events[type] = null;
-    }
-    return this;
-  };
-
-  EventEmitter.prototype.listeners = function(type) {
-    if(this.wildcard) {
-      var handlers = [];
-      var ns = typeof type === 'string' ? type.split(this.delimiter) : type.slice();
-      searchListenerTree.call(this, handlers, ns, this.listenerTree, 0);
-      return handlers;
-    }
-
-    this._events || init.call(this);
-
-    if (!this._events[type]) this._events[type] = [];
-    if (!isArray(this._events[type])) {
-      this._events[type] = [this._events[type]];
-    }
-    return this._events[type];
-  };
-
-  EventEmitter.prototype.listenersAny = function() {
-
-    if(this._all) {
-      return this._all;
-    }
-    else {
-      return [];
-    }
-
-  };
-
-  if (typeof define === 'function' && define.amd) {
-     // AMD. Register as an anonymous module.
-    define(function() {
-      return EventEmitter;
-    });
-  } else if (typeof exports === 'object') {
-    // CommonJS
-    exports.EventEmitter2 = EventEmitter;
-  }
-  else {
-    // Browser global.
-    window.EventEmitter2 = EventEmitter;
-  }
-}();
+  });
+}
 
 },{}]},{},[1])

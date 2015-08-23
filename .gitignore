@@ -1,3 +1,8 @@
 bower_components/
 node_modules/
 .idea/
+example/fxos-j5/*-bundle.js
+example/cordova-j5/platforms/*/*
+example/cordova-j5/plugins/*/*
+example/cordova-j5/plugins/*.json
+example/cordova-j5/www/js/*-bundle.js

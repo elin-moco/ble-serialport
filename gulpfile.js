@@ -27,6 +27,9 @@ var lintSources = [
   '!' + options.param.build + '/**',
   '!' + options.param.dist + '/**',
   '!example/fxos-j5/*-bundle.js',
+  '!example/cordova-j5/www/js/*-bundle.js',
+  '!example/cordova-j5/plugins/**',
+  '!example/cordova-j5/platforms/**',
   '!node_modules/**'
 ];
 
@@ -36,6 +39,9 @@ gulp.task('jsonlint', function() {
     '!' + options.param.build + '/**',
     '!' + options.param.dist + '/**',
     '!example/fxos-j5/*-bundle.js',
+    '!example/cordova-j5/www/js/*-bundle.js',
+    '!example/cordova-j5/plugins/**',
+    '!example/cordova-j5/platforms/**',
     '!node_modules/**'])
     .pipe(jsonlint())
     .pipe(jsonlint.reporter());
@@ -49,6 +55,7 @@ gulp.task('sloc', function() {
 gulp.task('clean', function(cb) {
   return del([
     'example/fxos-j5/*-bundle.js',
+    'example/cordova-j5/www/js/*-bundle.js',
     options.param.build,
     options.param.dist
   ], cb);
@@ -116,7 +123,8 @@ gulp.task('build', ['build-ble-serialport', 'build-j5', 'build-firmata']);
 //FIXME: currently compress won't work with a clean build
 gulp.task('dist', function() {
   gulp.src('build/*.js')
-    .pipe(gulp.dest('example/fxos-j5/'));
+    .pipe(gulp.dest('example/fxos-j5/'))
+    .pipe(gulp.dest('example/cordova-j5/www/js/'));
   //gulp.start('compress');
 });
 

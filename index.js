@@ -1,6 +1,7 @@
 /* global process, require, module */
 'use strict';
 
+require('./polyfills');
 var util = require('util');
 var stream = require('stream');
 if (process) {
