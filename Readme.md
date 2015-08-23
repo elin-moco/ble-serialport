@@ -121,7 +121,7 @@ See [blue-yeast] if you are interested in enabling this for other platforms.
 [firmata]: https://github.com/jgautier/firmata/ 
 [Johnny Five]: http://github.com/rwaldron/johnny-five/ 
 [BleFirmataSketch]: https://codebender.cc/sketch:128276
-[blue-yeast]: https://github.com/evanxd/blue-yeast
+[blue-yeast]: https://github.com/elin-moco/blue-yeast
 [WebBluetooth V2 API]: https://wiki.mozilla.org/B2G/Bluetooth/WebBluetooth-v2
 [browserify]: http://browserify.org/ 
 [node.js]: https://nodejs.org/
