@@ -163,7 +163,7 @@ if (process) {
         require('./fxos/blue_yeast');
       }
     } else {
-      throw 'This implementation is for browser but no window object found.'
+      throw 'This implementation is for browser but no window object found.';
     }
   } else {
     exports.Bluetooth = require('./node/blue_yeast').Bluetooth;
@@ -252,11 +252,11 @@ if (process) {
   BlueYeast.prototype._discoverServices = function(device, client) {
     var writeCharacteristics =
       client.characteristics.filter(function(characteristic) {
-        return characteristic.characteristic === BLE_RX_UUID;
+        return characteristic.characteristic.toLowerCase() === BLE_RX_UUID;
       });
     var notifyCharacteristics =
       client.characteristics.filter(function(characteristic) {
-        return characteristic.characteristic === BLE_TX_UUID;
+        return characteristic.characteristic.toLowerCase() === BLE_TX_UUID;
       });
     device.address = client.id;
     if (writeCharacteristics.length > 0) {
@@ -19389,6 +19389,8 @@ function hasOwnProperty(obj, prop) {
 
 }).call(this,require("IrXUsu"),typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{"./support/isBuffer":135,"IrXUsu":121,"inherits":118}],137:[function(require,module,exports){
+/*jshint strict: false */
+
 if (!Object.assign) {
   Object.defineProperty(Object, 'assign', {
     enumerable: false,
@@ -19409,7 +19411,8 @@ if (!Object.assign) {
         nextSource = Object(nextSource);
 
         var keysArray = Object.keys(Object(nextSource));
-        for (var nextIndex = 0, len = keysArray.length; nextIndex < len; nextIndex++) {
+        for (var nextIndex = 0, len = keysArray.length; nextIndex < len;
+             nextIndex++) {
           var nextKey = keysArray[nextIndex];
           var desc = Object.getOwnPropertyDescriptor(nextSource, nextKey);
           if (desc !== undefined && desc.enumerable) {
@@ -19421,5 +19424,36 @@ if (!Object.assign) {
     }
   });
 }
+
+if (!Array.prototype.filter) {
+  Array.prototype.filter = function(fun/*, thisArg*/) {
+    'use strict';
+
+    if (this === void 0 || this === null) {
+      throw new TypeError();
+    }
+
+    var t = Object(this);
+    var len = t.length >>> 0;
+    if (typeof fun !== 'function') {
+      throw new TypeError();
+    }
+
+    var res = [];
+    var thisArg = arguments.length >= 2 ? arguments[1] : void 0;
+    for (var i = 0; i < len; i++) {
+      if (i in t) {
+        var val = t[i];
+
+        if (fun.call(thisArg, val, i, t)) {
+          res.push(val);
+        }
+      }
+    }
+
+    return res;
+  };
+}
+
 
 },{}]},{},[1])

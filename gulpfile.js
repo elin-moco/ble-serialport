@@ -26,10 +26,12 @@ var lintSources = [
   '**/*.js',
   '!' + options.param.build + '/**',
   '!' + options.param.dist + '/**',
-  '!example/fxos-j5/*-bundle.js',
-  '!example/cordova-j5/www/js/*-bundle.js',
-  '!example/cordova-j5/plugins/**',
-  '!example/cordova-j5/platforms/**',
+  '!example/fxos-j5*/*-bundle.js',
+  '!example/fxos-j5*/bower_components/**',
+  '!example/cordova-j5*/www/js/*-bundle.js',
+  '!example/cordova-j5*/www/bower_components/**',
+  '!example/cordova-j5*/plugins/**',
+  '!example/cordova-j5*/platforms/**',
   '!node_modules/**'
 ];
 
@@ -38,10 +40,12 @@ gulp.task('jsonlint', function() {
     '**/*.json',
     '!' + options.param.build + '/**',
     '!' + options.param.dist + '/**',
-    '!example/fxos-j5/*-bundle.js',
-    '!example/cordova-j5/www/js/*-bundle.js',
-    '!example/cordova-j5/plugins/**',
-    '!example/cordova-j5/platforms/**',
+    '!example/fxos-j5*/*-bundle.js',
+    '!example/fxos-j5*/bower_components/**',
+    '!example/cordova-j5*/www/js/*-bundle.js',
+    '!example/cordova-j5*/www/bower_components/**',
+    '!example/cordova-j5*/plugins/**',
+    '!example/cordova-j5*/platforms/**',
     '!node_modules/**'])
     .pipe(jsonlint())
     .pipe(jsonlint.reporter());

@@ -1,6 +1,6 @@
 {
   "name": "ble-serialport",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "description": "Virtual serial device over BLE",
   "main": "index.js",
   "repository": {
@@ -13,9 +13,9 @@
   "author": {
     "name": "Eddie Lin"
   },
-  "license": "Apache License 2.0",
+  "license": "MPL 2.0",
   "dependencies": {
-    "blue-yeast": "0.1.5"
+    "blue-yeast": "0.1.6"
   },
   "homepage": "https://github.com/elin-moco/ble-serialport",
   "devDependencies": {

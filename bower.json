@@ -1,0 +1,30 @@
+{
+  "name": "ble-serialport",
+  "main": "index.js",
+  "version": "0.1.5",
+  "homepage": "https://github.com/elin-moco/ble-serialport",
+  "authors": [
+    "Eddie Lin <elin@mozilla.com>"
+  ],
+  "description": "Virtual serial device over BLE",
+  "keywords": [
+    "serialport",
+    "bluetooth",
+    "ble",
+    "johnny",
+    "five",
+    "firmata",
+    "arduino",
+    "cordova",
+    "phonegap",
+    "firefoxos"
+  ],
+  "license": "MPL 2.0",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ]
+}
