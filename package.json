@@ -1,6 +1,6 @@
 {
   "name": "ble-serialport",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Virtual serial device over BLE",
   "main": "index.js",
   "repository": {
@@ -15,7 +15,7 @@
   },
   "license": "MPL 2.0",
   "dependencies": {
-    "blue-yeast": "0.1.7"
+    "blue-yeast": "0.1.8"
   },
   "homepage": "https://github.com/elin-moco/ble-serialport",
   "devDependencies": {
