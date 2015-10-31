@@ -1,6 +1,6 @@
 {
   "name": "ble-serialport",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Virtual serial device over BLE",
   "main": "index.js",
   "repository": {
