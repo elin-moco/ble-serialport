@@ -69,7 +69,7 @@ BleSerialPort.prototype.connect = function() {
 };
 
 BleSerialPort.prototype.disconnect = function() {
-  return self.device.disconnect();
+  return this.device.disconnect();
 };
 
 BleSerialPort.prototype.open = function(callback) {
